@@ -6,15 +6,12 @@ from sklearn.model_selection import train_test_split
 import seaborn as sns
 import torch
 import torch.nn as nn
-from torch.utils.data import ConcatDataset, DataLoader
 from embryo_video import hist_video
 from pathlib import Path
 import yaml
         
         
 from cnn_classifier import cnn_classifier
-from lstm_classifier import lstm_classifier
-from forward_algorithm import OnlineForwardAlgorithm
 
 
 class NeuralHMM:
@@ -90,40 +87,25 @@ class NeuralHMM:
         probs /= probs.sum() + 1e-9
         return probs
     
-    def _estimate_transition_matrix(self):
-        T = np.zeros((self.n_states, self.n_states))
-        for vid in self.vids:
-            labels = list(vid.frame_labels.values())
-            for i in range(len(labels) - 1):
-                T[labels[i], labels[i+1]] += 1
-        # Normalize rows to sum to 1
-        T = T / (T.sum(axis=1, keepdims=True) + 1e-9)
-        self.transition_matrix = T
-    
     def train_hmm(self):
         train_vids, val_vids = train_test_split(
             self.vids, test_size=0.2, random_state=42
         )
 
-        print([vid.vid_path for vid in val_vids])
-
-        self._estimate_transition_matrix()
-        #self.cnn.train_model(train_vids, val_vids, best_model_path='models/best_hmm_cnn.pt', epochs=10, batch_size=16)
-        self.cnn.load_from_path('models/best_hmm_cnn.pt')
+        self.cnn.train_model(train_vids, val_vids, best_model_path='models/best_hmm_cnn.pt', epochs=10, batch_size=16)
+        #self.cnn.load_from_path('models/best_hmm_cnn.pt')
         self.cnn.evaluate(val_vids)
-        #self.cnn.remove_head()
-        #self.lstm = lstm_classifier(self.hidden_size, self.device, self.STATES, pretrained_cnn=self.cnn)
-        #self.lstm.train_model(train_vids, val_vids, epochs=10, batch_size=16)
-        #self.lstm.load_from_path('models/best_hmm_lstm.pt')
-        #self.lstm.evaluate(val_vids)
         self._train_duration_model()
-        self.evaluate_sample(val_vids[0])
         self.evaluate(val_vids)
 
-    def evaluate_sample(self, vid):
+    def evaluate_sample(self, vid, ax=None):
         print(f'Inferring for sample {vid.vid_path}')
         current_state = None
         frames_in_state = 0
+
+        labels = []
+        preds = []
+        cnn_preds = []
 
         for t in range(len(vid)):
             frame, label = vid[t]
@@ -133,19 +115,21 @@ class NeuralHMM:
                 logits = self.cnn.model(frame)
                 cnn_probs = (torch.softmax(logits, dim=-1).cpu().numpy().squeeze()
             )
-
+            cnn_pred = np.argmax(cnn_probs)
+            
             seconds_in_state = frames_in_state * vid.time_between_frames
             duration_probs = self._get_duration_probs(current_state, seconds_in_state)
 
-            # combined = lstm_probs * duration_probs
             combined = cnn_probs * duration_probs
             combined /= combined.sum()
             prediction = np.argmax(combined)
-
             prediction = max(prediction, current_state or 0)
 
-            print(f'Prediction for frame {t}: {self.STATES[prediction]}\tTrue label: {self.STATES[label]}')
-            #print(f'Probabilities: {combined}')
+            labels.append(label)
+            preds.append(prediction)
+            cnn_preds.append(cnn_pred)
+
+            #print(f'Prediction for frame {t}: {self.STATES[prediction]}\tTrue label: {self.STATES[label]}')
 
             if prediction == current_state:
                 frames_in_state += 1
@@ -153,113 +137,140 @@ class NeuralHMM:
                 current_state = prediction
                 frames_in_state = 1
 
+        labels = np.array(labels)
+        preds = np.array(preds)
+        cnn_preds = np.array(cnn_preds)
+
+        if ax is not None:
+            x = np.arange(len(labels))
+            ax.step(
+                x,
+                labels,
+                where='post',
+                linewidth=2,
+                color='tab:blue',
+                label='True'
+            )
+            ax.step(
+                x,
+                preds,
+                where='post',
+                linewidth=2,
+                color='tab:red',
+                alpha=0.8,
+                label='Predicted'
+            )
+            ax.step(
+                x,
+                cnn_preds,
+                where='post',
+                linewidth=2,
+                color='tab:green',
+                alpha=0.6,
+                linestyle='--',
+                label='CNN'
+            )
+            ax.set_title(Path(vid.vid_path).stem)
+            ax.set_xlabel('Frame')
+            ax.set_ylabel('State')
+            ax.set_yticks(range(self.n_states))
+            ax.set_yticklabels(self.STATES, fontsize=7)
+            ax.grid(True, alpha=0.3)
+            handles, labels_ = ax.get_legend_handles_labels()
+            if handles:
+                ax.legend(fontsize=8)
+        else:
+            fig, ax = plt.subplots(figsize=(12, 4))
+            x = np.arange(len(labels))
+            ax.step(
+                x,
+                labels,
+                where='post',
+                linewidth=2,
+                color='tab:blue',
+                label='True'
+            )
+            ax.step(
+                x,
+                preds,
+                where='post',
+                linewidth=2,
+                color='tab:red',
+                alpha=0.8,
+                label='Predicted'
+            )
+            ax.step(
+                x,
+                cnn_preds,
+                where='post',
+                linewidth=2,
+                color='tab:green',
+                alpha=0.6,
+                linestyle='--',
+                label='CNN'
+            )
+            ax.set_title(Path(vid.vid_path).stem)
+            ax.set_xlabel('Frame')
+            ax.set_ylabel('State')
+            ax.set_yticks(range(self.n_states))
+            ax.set_yticklabels(self.STATES)
+            ax.grid(True, alpha=0.3)
+            ax.legend()
+            plt.tight_layout()
+            plt.savefig(
+                f"models/{Path(vid.vid_path).stem}_state_progression.png",
+                dpi=150
+            )
+            plt.close()
+
+        return labels, preds, cnn_preds
+
     def evaluate(self, val_vids):
         all_preds = []
         all_labels = []
-        #all_lstm_preds = []
         all_cnn_preds = []
 
-        for vid in val_vids:
-            current_state = None
-            frames_in_state = 0
-            h = None
+        # Progression plots
+        n_vids = len(val_vids)
+        ncols = 2
+        nrows = int(np.ceil(n_vids / ncols))
 
-            for t in range(len(vid)):
-                frame, label = vid[t]
+        fig_progress, axes = plt.subplots(
+            nrows,
+            ncols,
+            figsize=(16, 4 * nrows),
+            squeeze=False
+        )
+        axes = axes.flatten()
 
-                # with torch.no_grad():
-                #     frame = frame.unsqueeze(0).to(self.device)
-                #     features = self.lstm.pretrained_cnn.model(frame)
-                #     lstm_out, h = self.lstm.model(features.unsqueeze(0), h)
-                #     logits = self.lstm.fc(lstm_out.squeeze(0))
-                #     lstm_probs = torch.softmax(logits, dim=-1).cpu().numpy().squeeze()
+        for vid_idx, vid in enumerate(val_vids):
+            labels, preds, cnn_preds = self.evaluate_sample(vid, ax=axes[vid_idx])
 
+            all_labels.extend(labels.tolist())
+            all_preds.extend(preds.tolist())
+            all_cnn_preds.extend(cnn_preds.tolist())
 
-                # lstm_pred = np.argmax(lstm_probs)
-                # all_lstm_preds.append(lstm_pred)
+        for ax in axes[n_vids:]:
+            ax.axis('off')
 
-                with torch.no_grad():
-                    frame = frame.unsqueeze(0).to(self.device)
-                    logits = self.cnn.model(frame)
-                    cnn_probs = (torch.softmax(logits, dim=-1).cpu().numpy().squeeze()
-                )
+        fig_progress.tight_layout()
+        fig_progress.savefig(
+            'models/validation_state_progression_grid.png',
+            dpi=150
+        )
+        plt.close(fig_progress)
 
-                cnn_pred = np.argmax(cnn_probs)
-                all_cnn_preds.append(cnn_pred)
-
-                seconds_in_state = frames_in_state * vid.time_between_frames
-                duration_probs = self._get_duration_probs(current_state, seconds_in_state)
-
-                # combined = lstm_probs * duration_probs
-                combined = cnn_probs * duration_probs
-                combined /= combined.sum()
-                prediction = np.argmax(combined)
-                prediction = max(prediction, current_state or 0)
-
-                all_preds.append(prediction)
-                all_labels.append(label)
-
-                if prediction == current_state:
-                    frames_in_state += 1
-                else:
-                    current_state = prediction
-                    frames_in_state = 1
+        print('State progression grid saved to models/validation_state_progression_grid.png')
 
         all_preds = np.array(all_preds)
         all_labels = np.array(all_labels)
-        # all_lstm_preds = np.array(all_lstm_preds)
         all_cnn_preds = np.array(all_cnn_preds)
 
-        # lstm_acc = (all_lstm_preds == all_labels).mean()
         cnn_acc = (all_cnn_preds == all_labels).mean()
         hmm_acc = (all_preds == all_labels).mean()
-        # print(f'LSTM only: {lstm_acc:.3f}')
+
         print(f'CNN only: {cnn_acc:.3f}')
         print(f'HMM: {hmm_acc:.3f}')
-
-        # Confusion matrix
-        cm = confusion_matrix(all_labels, all_preds, labels=list(range(self.n_states)))
-        cm_norm = cm.astype(float) / (cm.sum(axis=1, keepdims=True) + 1e-9)
-
-        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-
-        sns.heatmap(cm_norm, annot=True, fmt='.2f', cmap='Blues',
-                    xticklabels=self.STATES, yticklabels=self.STATES, ax=axes[0])
-        axes[0].set_xlabel('Predicted')
-        axes[0].set_ylabel('True')
-        axes[0].set_title(f'HMM (acc={hmm_acc:.3f})')
-
-        # cm_lstm = confusion_matrix(all_labels, all_lstm_preds, labels=list(range(self.n_states)))
-        # cm_lstm_norm = cm_lstm.astype(float) / (cm_lstm.sum(axis=1, keepdims=True) + 1e-9)
-
-        # sns.heatmap(cm_lstm_norm, annot=True, fmt='.2f', cmap='Blues',
-        #             xticklabels=self.STATES, yticklabels=self.STATES, ax=axes[1])
-        # axes[1].set_xlabel('Predicted')
-        # axes[1].set_ylabel('True')
-        # axes[1].set_title(f'LSTM only (acc={lstm_acc:.3f})')
-
-        # plt.tight_layout()
-        # plt.savefig('models/hmm_evaluation.png', dpi=150)
-        # plt.close()
-        # print('Heatmap saved to models/hmm_evaluation.png')
-
-        # return hmm_acc, lstm_acc
-
-        cm_lstm = confusion_matrix(all_labels, all_cnn_preds, labels=list(range(self.n_states)))
-        cm_lstm_norm = cm_lstm.astype(float) / (cm_lstm.sum(axis=1, keepdims=True) + 1e-9)
-
-        sns.heatmap(cm_lstm_norm, annot=True, fmt='.2f', cmap='Blues',
-                    xticklabels=self.STATES, yticklabels=self.STATES, ax=axes[1])
-        axes[1].set_xlabel('Predicted')
-        axes[1].set_ylabel('True')
-        axes[1].set_title(f'CNN only (acc={cnn_acc:.3f})')
-
-        plt.tight_layout()
-        plt.savefig('models/hmm_evaluation.png', dpi=150)
-        plt.close()
-        print('Heatmap saved to models/hmm_evaluation.png')
-
-        return hmm_acc, cnn_acc
 
 if __name__ == '__main__':
 
@@ -272,6 +283,4 @@ if __name__ == '__main__':
     print(f'Using device: {DEVICE}')
     classifier = NeuralHMM('data/hmm_tifs', DEVICE, window_size=1)
 
-    # print(classifier.vids[0].get_frame_window(6))
     classifier.train_hmm()
-    # print(classifier.cnn.predict(classifier.vids[0].get_frame_window(6)))
