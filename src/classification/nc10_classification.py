@@ -1,3 +1,5 @@
+# Classifying embryos pre and post NC10
+
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset, Dataset
