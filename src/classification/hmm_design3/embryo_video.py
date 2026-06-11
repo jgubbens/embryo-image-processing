@@ -3,7 +3,7 @@ import tifffile
 import torch
 from torch.utils.data import Dataset
 
-class hist_video(Dataset):
+class embryo_video(Dataset):
     
     def __init__(self, yaml_data, vid, states, window_size=5, img_size=(224, 224)):
         self.yaml_data = yaml_data

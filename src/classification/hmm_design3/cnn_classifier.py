@@ -29,14 +29,12 @@ class cnn_classifier:
             if any(name.startswith(p) for p in ['layer1', 'layer2', 'bn1']):
                 param.requires_grad = False
             
-        w = self.model.conv1.weight.mean(dim=1, keepdim=True) # (64, 1, 7, 7)
-        w = w.repeat(1, self.window_size, 1, 1) # (64, 5, 7, 7)
+        w = self.model.conv1.weight.mean(dim=1, keepdim=True)
+        w = w.repeat(1, self.window_size, 1, 1)
         self.model.conv1 = nn.Conv2d(self.window_size, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.model.conv1.weight = nn.Parameter(w)
 
         self.model.fc = nn.Linear(self.model.fc.in_features, len(self.STATES))
-        # Remove final classification layer
-        # self.model.fc = nn.Identity()
         self.model.to(self.device)
         
         return self.model
@@ -60,7 +58,9 @@ class cnn_classifier:
         optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=0.0001)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
-        loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        g = torch.Generator()
+        g.manual_seed(42)
+        loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, generator=g)
 
         val_dataset = ConcatDataset(val_vids)
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)

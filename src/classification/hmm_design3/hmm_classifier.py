@@ -1,12 +1,14 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import norm
+import shutil
 from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import train_test_split
 import seaborn as sns
+import tifffile
 import torch
 import torch.nn as nn
-from embryo_video import hist_video
+from embryo_video import embryo_video
 from pathlib import Path
 import yaml
         
@@ -18,11 +20,13 @@ class NeuralHMM:
 
     STATES = ['undetectable', 'NC9', 'NC9M', 'NC10', 'NC10M', 'NC11', 'NC11M', 'NC12', 'NC12M', 'NC13', 'NC13M', 'NC14+']
 
-    def __init__(self, data_dir, device, window_size):
+    def __init__(self, data_dir, device, window_size, preprocess_data=True):
         self.data_dir = data_dir
         self.device = device
         self.n_states = len(self.STATES)
         self.window_size = window_size
+        if preprocess_data:
+            self.process_training_data()
         self.load_embryo_videos()
         self.cnn = cnn_classifier(self.device, window_size, self.STATES)
         self.hidden_size = self.cnn.get_hidden_size()
@@ -33,15 +37,15 @@ class NeuralHMM:
         self.vids = []
         for embryo in yaml_data:
             vid_path = Path(self.data_dir, 'labeled_tifs', f'{embryo}.tif')
-            self.vids.append(hist_video(yaml_data[embryo], vid_path, self.STATES, window_size=self.window_size, img_size=(800, 800)))
+            self.vids.append(embryo_video(yaml_data[embryo], vid_path, self.STATES, window_size=self.window_size, img_size=(800, 800)))
 
     def _load_annotations(self) -> dict:
         with open(Path(self.data_dir, 'labels.yaml')) as f:
             return yaml.safe_load(f)
         
-    def _train_duration_model(self):
+    def _train_duration_model(self, vids):
         durations = {i: [] for i in range(self.n_states)}
-        for vid in self.vids:
+        for vid in vids:
             labels = list(vid.frame_labels.values())
             current_state = labels[0]
             count = 1
@@ -92,10 +96,10 @@ class NeuralHMM:
             self.vids, test_size=0.2, random_state=42
         )
 
-        self.cnn.train_model(train_vids, val_vids, best_model_path='models/best_hmm_cnn.pt', epochs=10, batch_size=16)
-        #self.cnn.load_from_path('models/best_hmm_cnn.pt')
+        #self.cnn.train_model(train_vids, val_vids, best_model_path='models/best_hmm_cnn.pt', epochs=10, batch_size=16)
+        self.cnn.load_from_path('models/best_hmm_cnn.pt')
         self.cnn.evaluate(val_vids)
-        self._train_duration_model()
+        self._train_duration_model(train_vids)
         self.evaluate(val_vids)
 
     def evaluate_sample(self, vid, ax=None):
@@ -143,33 +147,9 @@ class NeuralHMM:
 
         if ax is not None:
             x = np.arange(len(labels))
-            ax.step(
-                x,
-                labels,
-                where='post',
-                linewidth=2,
-                color='tab:blue',
-                label='True'
-            )
-            ax.step(
-                x,
-                preds,
-                where='post',
-                linewidth=2,
-                color='tab:red',
-                alpha=0.8,
-                label='Predicted'
-            )
-            ax.step(
-                x,
-                cnn_preds,
-                where='post',
-                linewidth=2,
-                color='tab:green',
-                alpha=0.6,
-                linestyle='--',
-                label='CNN'
-            )
+            ax.step(x, labels, where='post', linewidth=2, color='tab:blue', label='True')
+            ax.step(x, preds, where='post', linewidth=2, color='tab:red', alpha=0.8, label='Predicted')
+            ax.step(x, cnn_preds, where='post', linewidth=2, color='tab:green', alpha=0.6, linestyle='--', label='CNN')
             ax.set_title(Path(vid.vid_path).stem)
             ax.set_xlabel('Frame')
             ax.set_ylabel('State')
@@ -182,33 +162,9 @@ class NeuralHMM:
         else:
             fig, ax = plt.subplots(figsize=(12, 4))
             x = np.arange(len(labels))
-            ax.step(
-                x,
-                labels,
-                where='post',
-                linewidth=2,
-                color='tab:blue',
-                label='True'
-            )
-            ax.step(
-                x,
-                preds,
-                where='post',
-                linewidth=2,
-                color='tab:red',
-                alpha=0.8,
-                label='Predicted'
-            )
-            ax.step(
-                x,
-                cnn_preds,
-                where='post',
-                linewidth=2,
-                color='tab:green',
-                alpha=0.6,
-                linestyle='--',
-                label='CNN'
-            )
+            ax.step(x, labels, where='post', linewidth=2, color='tab:blue', label='True')
+            ax.step(x, preds, where='post', linewidth=2, color='tab:red', alpha=0.8, label='Predicted')
+            ax.step(x, cnn_preds, where='post', linewidth=2, color='tab:green', alpha=0.6, linestyle='--', label='CNN')
             ax.set_title(Path(vid.vid_path).stem)
             ax.set_xlabel('Frame')
             ax.set_ylabel('State')
@@ -269,8 +225,44 @@ class NeuralHMM:
         cnn_acc = (all_cnn_preds == all_labels).mean()
         hmm_acc = (all_preds == all_labels).mean()
 
+        # Confusion matrix heatmap
+        cm = confusion_matrix(all_labels, all_preds, labels=list(range(len(self.STATES))))
+        cm_norm = cm.astype(float) / cm.sum(axis=1, keepdims=True)
+
+        fig, ax = plt.subplots(figsize=(8, 6))
+        sns.heatmap(cm_norm, annot=True, fmt='.2f', cmap='Blues', xticklabels=self.STATES, yticklabels=self.STATES, ax=ax)
+        ax.set_xlabel('Predicted')
+        ax.set_ylabel('True')
+        ax.set_title(f'Confusion Matrix (accuracy={hmm_acc:.3f})')
+        plt.tight_layout()
+        heatmap_path = 'models/hmm_heatmap.png'
+        plt.savefig(heatmap_path, dpi=150)
+        plt.close()
+        print(f'Heatmap saved to {heatmap_path}')
+
         print(f'CNN only: {cnn_acc:.3f}')
         print(f'HMM: {hmm_acc:.3f}')
+
+    def make_predictions_vid(self, video_path):
+        vid = tifffile.open(video_path)
+        # Need to make predictions on an embryo video without labels
+    
+    def process_training_data(self):
+        # Copy raw data into processed directory
+        yaml_data = self._load_annotations()
+        yaml_path = Path(self.data_dir, 'labels.yaml')
+        shutil.copy(yaml_path, Path(self.data_dir, 'processed', 'labels.yaml'))
+
+        for embryo in yaml_data:
+            vid = tifffile.imread(Path(self.data_dir, 'labeled_tifs', f'{embryo}.tif'))
+            # Segment out the embryo
+            
+            # Paste on blank background
+            
+            # Save in processed directory
+            destination_path = Path(self.data_dir, 'processed', f'{embryo}.tif')
+            destination_path.mkdir(parents=True, exist_ok=True)
+            
 
 if __name__ == '__main__':
 
@@ -281,6 +273,6 @@ if __name__ == '__main__':
         else 'cpu'
     )
     print(f'Using device: {DEVICE}')
-    classifier = NeuralHMM('data/hmm_tifs', DEVICE, window_size=1)
+    classifier = NeuralHMM('data/hmm_tifs', DEVICE, window_size=1, preprocess_data=True)
 
     classifier.train_hmm()
