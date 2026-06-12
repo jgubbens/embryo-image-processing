@@ -8,35 +8,41 @@ import seaborn as sns
 import tifffile
 import torch
 import torch.nn as nn
-from embryo_video import embryo_video
 from pathlib import Path
+import sys
 import yaml
-        
-        
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from cnn_classifier import cnn_classifier
+from embryo_video import embryo_video
+from processing.extract_embryo import extract_embryo
 
 
 class NeuralHMM:
 
     STATES = ['undetectable', 'NC9', 'NC9M', 'NC10', 'NC10M', 'NC11', 'NC11M', 'NC12', 'NC12M', 'NC13', 'NC13M', 'NC14+']
 
-    def __init__(self, data_dir, device, window_size, preprocess_data=True):
+    def __init__(self, data_dir, device, window_size, preprocess_images=False):
         self.data_dir = data_dir
         self.device = device
         self.n_states = len(self.STATES)
         self.window_size = window_size
-        if preprocess_data:
+        if preprocess_images:
             self.process_training_data()
-        self.load_embryo_videos()
+        self.load_embryo_videos(processed=preprocess_images)
         self.cnn = cnn_classifier(self.device, window_size, self.STATES)
         self.hidden_size = self.cnn.get_hidden_size()
         self.linear_layer = nn.Linear(self.hidden_size, self.n_states)
     
-    def load_embryo_videos(self):
+    def load_embryo_videos(self, processed):
         yaml_data = self._load_annotations()
         self.vids = []
         for embryo in yaml_data:
-            vid_path = Path(self.data_dir, 'labeled_tifs', f'{embryo}.tif')
+            if processed:
+                vid_path = Path(self.data_dir, 'processed_tifs', f'{embryo}.tif')
+            else:
+                vid_path = Path(self.data_dir, 'labeled_tifs', f'{embryo}.tif')
             self.vids.append(embryo_video(yaml_data[embryo], vid_path, self.STATES, window_size=self.window_size, img_size=(800, 800)))
 
     def _load_annotations(self) -> dict:
@@ -96,13 +102,13 @@ class NeuralHMM:
             self.vids, test_size=0.2, random_state=42
         )
 
-        #self.cnn.train_model(train_vids, val_vids, best_model_path='models/best_hmm_cnn.pt', epochs=10, batch_size=16)
-        self.cnn.load_from_path('models/best_hmm_cnn.pt')
+        self.cnn.train_model(train_vids, val_vids, best_model_path='models/best_hmm_cnn.pt', epochs=10, batch_size=16)
+        #self.cnn.load_from_path('models/best_hmm_cnn.pt')
         self.cnn.evaluate(val_vids)
         self._train_duration_model(train_vids)
         self.evaluate(val_vids)
 
-    def evaluate_sample(self, vid, ax=None):
+    def _evaluate_sample(self, vid, ax=None):
         print(f'Inferring for sample {vid.vid_path}')
         current_state = None
         frames_in_state = 0
@@ -200,7 +206,7 @@ class NeuralHMM:
         axes = axes.flatten()
 
         for vid_idx, vid in enumerate(val_vids):
-            labels, preds, cnn_preds = self.evaluate_sample(vid, ax=axes[vid_idx])
+            labels, preds, cnn_preds = self._evaluate_sample(vid, ax=axes[vid_idx])
 
             all_labels.extend(labels.tolist())
             all_preds.extend(preds.tolist())
@@ -247,21 +253,19 @@ class NeuralHMM:
         vid = tifffile.open(video_path)
         # Need to make predictions on an embryo video without labels
     
+    def predict_frame(self):
+        pass
+    
     def process_training_data(self):
-        # Copy raw data into processed directory
+        processed_dir = Path(self.data_dir, 'processed_tifs')
+        processed_dir.mkdir(parents=True, exist_ok=True)
+
         yaml_data = self._load_annotations()
-        yaml_path = Path(self.data_dir, 'labels.yaml')
-        shutil.copy(yaml_path, Path(self.data_dir, 'processed', 'labels.yaml'))
 
         for embryo in yaml_data:
-            vid = tifffile.imread(Path(self.data_dir, 'labeled_tifs', f'{embryo}.tif'))
-            # Segment out the embryo
-            
-            # Paste on blank background
-            
-            # Save in processed directory
-            destination_path = Path(self.data_dir, 'processed', f'{embryo}.tif')
-            destination_path.mkdir(parents=True, exist_ok=True)
+            vid_path = tifffile.imread(Path(self.data_dir, 'labeled_tifs', f'{embryo}.tif'))
+            output_path = processed_dir / f'{embryo}.tif'
+            extract_embryo(vid_path, output_path=output_path)
             
 
 if __name__ == '__main__':
@@ -273,6 +277,6 @@ if __name__ == '__main__':
         else 'cpu'
     )
     print(f'Using device: {DEVICE}')
-    classifier = NeuralHMM('data/hmm_tifs', DEVICE, window_size=1, preprocess_data=True)
+    classifier = NeuralHMM('data/hmm_tifs', DEVICE, window_size=1)
 
     classifier.train_hmm()
