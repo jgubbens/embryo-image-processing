@@ -1,3 +1,4 @@
+import json
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import norm
@@ -35,6 +36,21 @@ class NeuralHMM:
         self.hidden_size = self.cnn.get_hidden_size()
         self.linear_layer = nn.Linear(self.hidden_size, self.n_states)
     
+    def train_hmm(self):
+        train_vids, val_vids = train_test_split(
+            self.vids, test_size=0.2, random_state=1
+        )
+        print(f'Validation vids: {[embryo.vid_path for embryo in val_vids]}')
+        self.cnn.train_model(train_vids, val_vids, best_model_path='models/best_hmm_cnn.pt', epochs=10, batch_size=16)
+        self.cnn.evaluate(val_vids)
+        self._train_duration_model(train_vids)
+        self.save_duration_model()
+        self.evaluate(val_vids)
+
+    def load_pretrained_models(self):
+        self.cnn.load_from_path('models/best_hmm_cnn.pt')
+        self.load_duration_model('models/duration_model.json')
+    
     def load_embryo_videos(self, processed):
         yaml_data = self._load_annotations()
         self.vids = []
@@ -42,7 +58,9 @@ class NeuralHMM:
             if processed:
                 vid_path = Path(self.data_dir, 'processed_tifs', f'{embryo}.tif')
             else:
-                vid_path = Path(self.data_dir, 'labeled_tifs', f'{embryo}.tif')
+                #vid_path = Path(self.data_dir, 'labeled_tifs', f'{embryo}.tif')
+                vid_path = Path(self.data_dir, 'histone', f'{embryo}.tif')
+                # vid_path = Path(self.data_dir, 'brightfield', f'{embryo}.tif')
             self.vids.append(embryo_video(yaml_data[embryo], vid_path, self.STATES, window_size=self.window_size, img_size=(800, 800)))
 
     def _load_annotations(self) -> dict:
@@ -71,6 +89,15 @@ class NeuralHMM:
             if d:
                 self.duration_model[state] = {'mean': np.mean(d), 'std': np.std(d) + 1e-6}
 
+    def save_duration_model(self, path='models/duration_model.json'):
+        with open(path, 'w') as f:
+            json.dump(self.duration_model, f, indent=2)
+
+    def load_duration_model(self, path='models/duration_model.json'):
+        with open(path) as f:
+            raw = json.load(f)
+        self.duration_model = {int(k): v for k, v in raw.items()}
+
     def _get_duration_probs(self, current_state, seconds_in_state):
         probs = np.zeros(self.n_states)
 
@@ -80,33 +107,28 @@ class NeuralHMM:
         if current_state in self.duration_model:
             d = self.duration_model[current_state]
             p_stay = 1 - norm.cdf(seconds_in_state, d['mean'], d['std'])
+            # Only allow undetectable to jump to NC9
             probs[current_state] = p_stay
-            if current_state == 0:
-                probs[0] = p_stay
-                remaining = (1 - p_stay) / (self.n_states - 1)
-                probs[1:] = remaining
+            if current_state + 1 < self.n_states:
+                probs[current_state + 1] = 1 - p_stay
             else:
-                probs[current_state] = p_stay
-                if current_state + 1 < self.n_states:
-                    probs[current_state + 1] = 1 - p_stay
-                else:
-                    probs[current_state] = 1.0
+                probs[current_state] = 1.0
+            # Allow undetectable to jump to any state
+            # if current_state == 0:
+            #     probs[0] = p_stay
+            #     remaining = (1 - p_stay) / (self.n_states - 1)
+            #     probs[1:] = remaining
+            # else:
+            #     probs[current_state] = p_stay
+            #     if current_state + 1 < self.n_states:
+            #         probs[current_state + 1] = 1 - p_stay
+            #     else:
+            #         probs[current_state] = 1.0
         else:
             probs[current_state] = 1.0
 
         probs /= probs.sum() + 1e-9
         return probs
-    
-    def train_hmm(self):
-        train_vids, val_vids = train_test_split(
-            self.vids, test_size=0.2, random_state=42
-        )
-
-        self.cnn.train_model(train_vids, val_vids, best_model_path='models/best_hmm_cnn.pt', epochs=10, batch_size=16)
-        #self.cnn.load_from_path('models/best_hmm_cnn.pt')
-        self.cnn.evaluate(val_vids)
-        self._train_duration_model(train_vids)
-        self.evaluate(val_vids)
 
     def _evaluate_sample(self, vid, ax=None):
         print(f'Inferring for sample {vid.vid_path}')
@@ -246,15 +268,66 @@ class NeuralHMM:
         plt.close()
         print(f'Heatmap saved to {heatmap_path}')
 
-        print(f'CNN only: {cnn_acc:.3f}')
-        print(f'HMM: {hmm_acc:.3f}')
+        print(f'CNN:\taccuracy: {cnn_acc:.3f}')
+        print(f'HMM:\taccuracy: {hmm_acc:.3f}')
 
     def make_predictions_vid(self, video_path):
         vid = tifffile.open(video_path)
         # Need to make predictions on an embryo video without labels
-    
-    def predict_frame(self):
-        pass
+
+    def initialize_live_prediction(self, time_between_frames=150, img_size=(800, 800)):
+        self.live = True
+        self.current_state = None
+        self.time_between_frames = time_between_frames
+        self.frames_in_state = 0
+        self.frame_idx = 0
+        self.predictions = []
+        self.live_img_size = img_size
+        self.frame_buffer = []
+
+    def _preprocess_live_frame(self, frame_np):
+        self.frame_buffer.append(frame_np)
+        if len(self.frame_buffer) > self.window_size:
+            self.frame_buffer.pop(0)
+        pad = self.window_size - len(self.frame_buffer)
+        window = np.stack(
+            [np.zeros_like(self.frame_buffer[0])] * pad + list(self.frame_buffer), axis=0
+        ).astype(np.float32)
+        for i in range(window.shape[0]):
+            vmin, vmax = window[i].min(), window[i].max()
+            if vmax > vmin:
+                window[i] = (window[i] - vmin) / (vmax - vmin)
+        tensor = torch.from_numpy(window).unsqueeze(0)
+        tensor = torch.nn.functional.interpolate(
+            tensor, size=self.live_img_size, mode='bilinear', align_corners=False
+        )
+        return tensor
+
+    def predict_frame(self, frame):
+        frame_np = frame.numpy() if isinstance(frame, torch.Tensor) else frame
+
+        with torch.no_grad():
+            x = self._preprocess_live_frame(frame_np).to(self.device)
+            logits = self.cnn.model(x)
+            cnn_probs = (torch.softmax(logits, dim=-1).cpu().numpy().squeeze()
+        )
+        cnn_pred = np.argmax(cnn_probs)
+        
+        seconds_in_state = self.frames_in_state * self.time_between_frames
+        duration_probs = self._get_duration_probs(self.current_state, seconds_in_state)
+
+        combined = cnn_probs * duration_probs
+        combined /= combined.sum()
+        prediction = np.argmax(combined)
+        prediction = max(prediction, self.current_state or 0)
+
+        print(f'Frame {self.frame_idx}:\tHMM Prediction: {self.STATES[prediction]}\tCNN Prediction: {self.STATES[cnn_pred]}')
+
+        # Update current state
+        self.frames_in_state = self.frames_in_state + 1 if prediction == self.current_state else 1
+        self.current_state = prediction
+        self.predictions.append(prediction)
+        self.frame_idx += 1
     
     def process_training_data(self):
         processed_dir = Path(self.data_dir, 'processed_tifs')
@@ -263,7 +336,9 @@ class NeuralHMM:
         yaml_data = self._load_annotations()
 
         for embryo in yaml_data:
-            vid_path = tifffile.imread(Path(self.data_dir, 'labeled_tifs', f'{embryo}.tif'))
+            # vid_path = tifffile.imread(Path(self.data_dir, 'labeled_tifs', f'{embryo}.tif'))
+            vid_path = tifffile.imread(Path(self.data_dir, 'histone', f'{embryo}.tif'))
+            # vid_path = tifffile.imread(Path(self.data_dir, 'brightfield', f'{embryo}.tif'))
             output_path = processed_dir / f'{embryo}.tif'
             extract_embryo(vid_path, output_path=output_path)
             
@@ -277,6 +352,16 @@ if __name__ == '__main__':
         else 'cpu'
     )
     print(f'Using device: {DEVICE}')
-    classifier = NeuralHMM('data/hmm_tifs', DEVICE, window_size=1)
+    # classifier = NeuralHMM('data/hmm_tifs', DEVICE, window_size=1)
+    classifier = NeuralHMM('data/training_data', DEVICE, window_size=1)
 
     classifier.train_hmm()
+    # classifier.load_pretrained_models()
+
+    # Test live classifier
+    # print('Testing live classifier')
+    # classifier.initialize_live_prediction(time_between_frames=150)
+    # # test_vid = tifffile.imread("data/hmm_tifs/unlabeled_tifs/inner.i12_channel_638_patterns.tif")
+    # test_vid = tifffile.imread("data/hmm_tifs/labeled_tifs/NCEmbryo2.tif")
+    # for frame in test_vid:
+    #     classifier.predict_frame(torch.tensor(frame))

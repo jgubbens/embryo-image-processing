@@ -3,7 +3,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import confusion_matrix, balanced_accuracy_score
 from tqdm import tqdm
 import torch
 import torch.nn as nn
@@ -147,7 +147,8 @@ class cnn_classifier:
 
         val_loss /= len(val_dataset)
         val_acc = val_correct / len(val_dataset)
-        print(f'Evaluation: loss {val_loss:.4f}, accuracy {val_acc:.3f}')
+        bal_acc = balanced_accuracy_score(all_labels, all_preds)
+        print(f'Evaluation: loss {val_loss:.4f}, accuracy {val_acc:.3f}, balanced_accuracy: {bal_acc:.3f}')
 
         # Confusion matrix heatmap
         cm = confusion_matrix(all_labels, all_preds, labels=list(range(len(self.STATES))))
@@ -167,6 +168,7 @@ class cnn_classifier:
     
     def load_from_path(self, path):
         self.model.load_state_dict(torch.load(path, map_location=self.device))
+        self.model.eval()
 
 if __name__ == '__main__':
     cnn = cnn_classifier(5)
