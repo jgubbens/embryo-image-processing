@@ -1,1 +1,1 @@
-**Computer Vision Analysis of Fly Embryo**
+**Computer Vision Analysis of Drosophila Embryo**
