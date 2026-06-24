@@ -4,7 +4,7 @@ Pipeline for staging *Drosophila* embryo development (nuclear cycles NC9–NC14+
 
 ## Pipeline
 
-1. **ND2 → TIFF conversion** ([src/processing/convert_nd2.py](src/processing/convert_nd2.py))
+1. **ND2 to TIFF conversion** ([src/processing/convert_nd2.py](src/processing/convert_nd2.py))
    Splits a multi-position, multi-channel `.nd2` acquisition into per-position, per-channel ImageJ-compatible TIFF stacks, with optional spatial binning and calibration metadata preserved.
 
 2. **Embryo extraction** ([src/processing/extract_embryo.py](src/processing/extract_embryo.py))
