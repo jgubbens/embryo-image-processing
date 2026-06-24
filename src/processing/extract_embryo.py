@@ -5,11 +5,12 @@ import cv2
 import numpy as np
 import tifffile
 from cellpose import models
+from cellpose.models import MODEL_DIR
 from cellpose.transforms import convert_image
 
 
-CELLPOSE_MODEL = "embryomodel"
-OUTPUT_SIZE = (800, 800)
+CELLPOSE_MODEL = str(MODEL_DIR / "embryomodel")
+OUTPUT_SIZE = (224, 224)
 
 def _segment_frame(model, frame: np.ndarray, segment_size=(100, 100)) -> np.ndarray:
     norm = cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)

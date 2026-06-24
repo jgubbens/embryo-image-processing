@@ -2,6 +2,7 @@
 
 import matplotlib.pyplot as plt
 import numpy as np
+import random
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, balanced_accuracy_score
 from tqdm import tqdm
@@ -15,11 +16,21 @@ class cnn_classifier:
     best_model_path = 'models/best_hmm_cnn.pt'
 
     def __init__(self, device, window_size, states):
+        self.set_seed()
         self.device = device
         self.window_size = window_size
         self.STATES = states
         self.hidden_size = 512
         self._build_model()
+    
+    def set_seed(self, s=42):
+        random.seed(s)
+        np.random.seed(s)
+        torch.manual_seed(s)
+        torch.cuda.manual_seed_all(s)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        torch.use_deterministic_algorithms(True)
 
     def _build_model(self):
         self.model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
@@ -68,6 +79,9 @@ class cnn_classifier:
 
         for epoch in range(1, epochs + 1):
             self.model.train()
+            for m in self.model.modules():
+                if isinstance(m, nn.BatchNorm2d) and not next(m.parameters()).requires_grad:
+                    m.eval()
             train_loss, train_correct = 0.0, 0
             for x, y in tqdm(loader, desc=f"Epoch {epoch}/{epochs}"):
                 x, y = x.to(self.device), y.to(self.device)

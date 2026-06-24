@@ -34,7 +34,6 @@ class NeuralHMM:
         self.load_embryo_videos(processed=preprocess_images)
         self.cnn = cnn_classifier(self.device, window_size, self.STATES)
         self.hidden_size = self.cnn.get_hidden_size()
-        self.linear_layer = nn.Linear(self.hidden_size, self.n_states)
     
     def train_hmm(self):
         train_vids, val_vids = train_test_split(
@@ -42,6 +41,7 @@ class NeuralHMM:
         )
         print(f'Validation vids: {[embryo.vid_path for embryo in val_vids]}')
         self.cnn.train_model(train_vids, val_vids, best_model_path='models/best_hmm_cnn.pt', epochs=10, batch_size=16)
+        self.cnn.model.eval()
         self.cnn.evaluate(val_vids)
         self._train_duration_model(train_vids)
         self.save_duration_model()
@@ -49,6 +49,7 @@ class NeuralHMM:
 
     def load_pretrained_models(self):
         self.cnn.load_from_path('models/best_hmm_cnn.pt')
+        self.cnn.model.eval()
         self.load_duration_model('models/duration_model.json')
     
     def load_embryo_videos(self, processed):
@@ -108,22 +109,22 @@ class NeuralHMM:
             d = self.duration_model[current_state]
             p_stay = 1 - norm.cdf(seconds_in_state, d['mean'], d['std'])
             # Only allow undetectable to jump to NC9
-            probs[current_state] = p_stay
-            if current_state + 1 < self.n_states:
-                probs[current_state + 1] = 1 - p_stay
-            else:
-                probs[current_state] = 1.0
-            # Allow undetectable to jump to any state
-            # if current_state == 0:
-            #     probs[0] = p_stay
-            #     remaining = (1 - p_stay) / (self.n_states - 1)
-            #     probs[1:] = remaining
+            # probs[current_state] = p_stay
+            # if current_state + 1 < self.n_states:
+            #     probs[current_state + 1] = 1 - p_stay
             # else:
-            #     probs[current_state] = p_stay
-            #     if current_state + 1 < self.n_states:
-            #         probs[current_state + 1] = 1 - p_stay
-            #     else:
-            #         probs[current_state] = 1.0
+            #     probs[current_state] = 1.0
+            # Allow undetectable to jump to any state
+            if current_state == 0:
+                probs[0] = p_stay
+                remaining = (1 - p_stay) / (self.n_states - 1)
+                probs[1:] = remaining
+            else:
+                probs[current_state] = p_stay
+                if current_state + 1 < self.n_states:
+                    probs[current_state + 1] = 1 - p_stay
+                else:
+                    probs[current_state] = 1.0
         else:
             probs[current_state] = 1.0
 
@@ -336,8 +337,8 @@ class NeuralHMM:
         yaml_data = self._load_annotations()
 
         for embryo in yaml_data:
-            # vid_path = tifffile.imread(Path(self.data_dir, 'labeled_tifs', f'{embryo}.tif'))
-            vid_path = tifffile.imread(Path(self.data_dir, 'histone', f'{embryo}.tif'))
+            vid_path = tifffile.imread(Path(self.data_dir, 'labeled_tifs', f'{embryo}.tif'))
+            # vid_path = tifffile.imread(Path(self.data_dir, 'histone', f'{embryo}.tif'))
             # vid_path = tifffile.imread(Path(self.data_dir, 'brightfield', f'{embryo}.tif'))
             output_path = processed_dir / f'{embryo}.tif'
             extract_embryo(vid_path, output_path=output_path)
@@ -352,8 +353,8 @@ if __name__ == '__main__':
         else 'cpu'
     )
     print(f'Using device: {DEVICE}')
-    # classifier = NeuralHMM('data/hmm_tifs', DEVICE, window_size=1)
-    classifier = NeuralHMM('data/training_data', DEVICE, window_size=1)
+    classifier = NeuralHMM('data/hmm_tifs', DEVICE, window_size=1, preprocess_images=True)
+    # classifier = NeuralHMM('data/training_data', DEVICE, window_size=1, preprocess_images=True)
 
     classifier.train_hmm()
     # classifier.load_pretrained_models()
