@@ -1,3 +1,4 @@
+```mermaid
 flowchart TD
     A["Last 5 frames of video<br/>(800 x 800 x 5)"] --> B["CNN<br/>(outer layer ignored)<br/>output: 512 x 1"]
     B --> C["LSTM<br/>512 x 1"]
@@ -14,3 +15,4 @@ flowchart TD
     L["Current belief state"] --> J
 
     J --> M["State Prediction"]
+```

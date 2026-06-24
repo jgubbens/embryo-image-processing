@@ -19,7 +19,6 @@ def _segment_frame(model, frame: np.ndarray, segment_size=(100, 100)) -> np.ndar
     norm = cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     enhanced = clahe.apply(norm)
-    # small = cv2.resize(frame, segment_size)
     small = cv2.resize(enhanced, segment_size)
     transformed = convert_image(small)
     masks = model.eval(transformed, normalize=True)[0]
