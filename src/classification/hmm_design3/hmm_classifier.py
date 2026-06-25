@@ -168,8 +168,6 @@ class NeuralHMM:
             preds.append(prediction)
             cnn_preds.append(cnn_pred)
 
-            #print(f'Prediction for frame {t}: {self.STATES[prediction]}\tTrue label: {self.STATES[label]}')
-
             if prediction == current_state:
                 frames_in_state += 1
             else:
@@ -281,60 +279,6 @@ class NeuralHMM:
     def make_predictions_vid(self, video_path):
         vid = tifffile.open(video_path)
         # Need to make predictions on an embryo video without labels
-
-    def initialize_live_prediction(self, time_between_frames=150, img_size=(800, 800)):
-        self.live = True
-        self.current_state = None
-        self.time_between_frames = time_between_frames
-        self.frames_in_state = 0
-        self.frame_idx = 0
-        self.predictions = []
-        self.live_img_size = img_size
-        self.frame_buffer = []
-
-    def _preprocess_live_frame(self, frame_np):
-        self.frame_buffer.append(frame_np)
-        if len(self.frame_buffer) > self.window_size:
-            self.frame_buffer.pop(0)
-        pad = self.window_size - len(self.frame_buffer)
-        window = np.stack(
-            [np.zeros_like(self.frame_buffer[0])] * pad + list(self.frame_buffer), axis=0
-        ).astype(np.float32)
-        for i in range(window.shape[0]):
-            vmin, vmax = window[i].min(), window[i].max()
-            if vmax > vmin:
-                window[i] = (window[i] - vmin) / (vmax - vmin)
-        tensor = torch.from_numpy(window).unsqueeze(0)
-        tensor = torch.nn.functional.interpolate(
-            tensor, size=self.live_img_size, mode='bilinear', align_corners=False
-        )
-        return tensor
-
-    def predict_frame(self, frame):
-        frame_np = frame.numpy() if isinstance(frame, torch.Tensor) else frame
-
-        with torch.no_grad():
-            x = self._preprocess_live_frame(frame_np).to(self.device)
-            logits = self.cnn.model(x)
-            cnn_probs = (torch.softmax(logits, dim=-1).cpu().numpy().squeeze()
-        )
-        cnn_pred = np.argmax(cnn_probs)
-        
-        seconds_in_state = self.frames_in_state * self.time_between_frames
-        duration_probs = self._get_duration_probs(self.current_state, seconds_in_state)
-
-        combined = cnn_probs * duration_probs
-        combined /= combined.sum()
-        prediction = np.argmax(combined)
-        prediction = max(prediction, self.current_state or 0)
-
-        print(f'Frame {self.frame_idx}:\tHMM Prediction: {self.STATES[prediction]}\tCNN Prediction: {self.STATES[cnn_pred]}')
-
-        # Update current state
-        self.frames_in_state = self.frames_in_state + 1 if prediction == self.current_state else 1
-        self.current_state = prediction
-        self.predictions.append(prediction)
-        self.frame_idx += 1
     
     def process_training_data(self):
         processed_dir = Path(self.data_dir, 'processed_tifs')
@@ -364,11 +308,3 @@ if __name__ == '__main__':
 
     classifier.train_hmm()
     # classifier.load_pretrained_models()
-
-    # Test live classifier
-    # print('Testing live classifier')
-    # classifier.initialize_live_prediction(time_between_frames=150)
-    # # test_vid = tifffile.imread("data/hmm_tifs/unlabeled_tifs/inner.i12_channel_638_patterns.tif")
-    # test_vid = tifffile.imread("data/hmm_tifs/labeled_tifs/NCEmbryo2.tif")
-    # for frame in test_vid:
-    #     classifier.predict_frame(torch.tensor(frame))
