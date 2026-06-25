@@ -48,7 +48,9 @@ class NeuralHMM:
         self.cnn.load_from_path('models/best_hmm_cnn.pt')
         self.cnn.model.eval()
         self.cnn.evaluate(val_vids)
-        self.lstm.train_model(train_vids, val_vids, epochs=10, batch_size=16, lr=0.0001)
+        if self.lstm_module:
+            self.lstm.train_model(train_vids, val_vids, epochs=10, batch_size=16, lr=0.0001)
+            self.lstm.evaluate(val_vids)
         self._train_duration_model(train_vids)
         self.save_duration_model()
         self.evaluate(val_vids)
@@ -56,6 +58,9 @@ class NeuralHMM:
     def load_pretrained_models(self):
         self.cnn.load_from_path('models/best_hmm_cnn.pt')
         self.cnn.model.eval()
+        if self.lstm_module:
+            self.cnn.remove_head()
+            self.lstm.load_from_path('models/best_hmm_lstm.pt')
         self.load_duration_model('models/duration_model.json')
     
     def load_embryo_videos(self, processed):
@@ -95,6 +100,11 @@ class NeuralHMM:
         for state, d in durations.items():
             if d:
                 self.duration_model[state] = {'mean': np.mean(d), 'std': np.std(d) + 1e-6}
+
+    def save_hmm_model(self, path='models/hmm.json'):
+        with open(path, 'w') as f:
+            json.dump(self.lstm_module, f, indent=2)
+            json.dump(self.duration_model, f, indent=2)
 
     def save_duration_model(self, path='models/duration_model.json'):
         with open(path, 'w') as f:
@@ -144,29 +154,39 @@ class NeuralHMM:
 
         labels = []
         preds = []
-        cnn_preds = []
+        model_preds = []
+
+        model_label = 'LSTM' if self.lstm_module else 'CNN'
+        model_color = 'tab:purple' if self.lstm_module else 'tab:green'
+
+        if self.lstm_module:
+            # CNN head was removed in favor of the LSTM, so probs come from
+            # running the per-frame CNN features through the LSTM instead.
+            seq_probs, _ = self.lstm.predict_probs(vid)
 
         for t in range(len(vid)):
             frame, label = vid[t]
 
-            with torch.no_grad():
-                frame = frame.unsqueeze(0).to(self.device)
-                logits = self.cnn.model(frame)
-                cnn_probs = (torch.softmax(logits, dim=-1).cpu().numpy().squeeze()
-            )
-            cnn_pred = np.argmax(cnn_probs)
-            
+            if self.lstm_module:
+                model_probs = seq_probs[t]
+            else:
+                with torch.no_grad():
+                    frame = frame.unsqueeze(0).to(self.device)
+                    logits = self.cnn.model(frame)
+                    model_probs = torch.softmax(logits, dim=-1).cpu().numpy().squeeze()
+            model_pred = np.argmax(model_probs)
+
             seconds_in_state = frames_in_state * vid.time_between_frames
             duration_probs = self._get_duration_probs(current_state, seconds_in_state)
 
-            combined = cnn_probs * duration_probs
+            combined = model_probs * duration_probs
             combined /= combined.sum()
             prediction = np.argmax(combined)
             prediction = max(prediction, current_state or 0)
 
             labels.append(label)
             preds.append(prediction)
-            cnn_preds.append(cnn_pred)
+            model_preds.append(model_pred)
 
             if prediction == current_state:
                 frames_in_state += 1
@@ -176,13 +196,13 @@ class NeuralHMM:
 
         labels = np.array(labels)
         preds = np.array(preds)
-        cnn_preds = np.array(cnn_preds)
+        model_preds = np.array(model_preds)
 
         if ax is not None:
             x = np.arange(len(labels))
             ax.step(x, labels, where='post', linewidth=2, color='tab:blue', label='True')
             ax.step(x, preds, where='post', linewidth=2, color='tab:red', alpha=0.8, label='Predicted')
-            ax.step(x, cnn_preds, where='post', linewidth=2, color='tab:green', alpha=0.6, linestyle='--', label='CNN')
+            ax.step(x, model_preds, where='post', linewidth=2, color=model_color, alpha=0.6, linestyle='--', label=model_label)
             ax.set_title(Path(vid.vid_path).stem)
             ax.set_xlabel('Frame')
             ax.set_ylabel('State')
@@ -197,7 +217,7 @@ class NeuralHMM:
             x = np.arange(len(labels))
             ax.step(x, labels, where='post', linewidth=2, color='tab:blue', label='True')
             ax.step(x, preds, where='post', linewidth=2, color='tab:red', alpha=0.8, label='Predicted')
-            ax.step(x, cnn_preds, where='post', linewidth=2, color='tab:green', alpha=0.6, linestyle='--', label='CNN')
+            ax.step(x, model_preds, where='post', linewidth=2, color=model_color, alpha=0.6, linestyle='--', label=model_label)
             ax.set_title(Path(vid.vid_path).stem)
             ax.set_xlabel('Frame')
             ax.set_ylabel('State')
@@ -212,12 +232,14 @@ class NeuralHMM:
             )
             plt.close()
 
-        return labels, preds, cnn_preds
+        return labels, preds, model_preds
 
     def evaluate(self, val_vids):
         all_preds = []
         all_labels = []
-        all_cnn_preds = []
+        all_model_preds = []
+
+        model_label = 'LSTM' if self.lstm_module else 'CNN'
 
         # Progression plots
         n_vids = len(val_vids)
@@ -233,11 +255,11 @@ class NeuralHMM:
         axes = axes.flatten()
 
         for vid_idx, vid in enumerate(val_vids):
-            labels, preds, cnn_preds = self._evaluate_sample(vid, ax=axes[vid_idx])
+            labels, preds, model_preds = self._evaluate_sample(vid, ax=axes[vid_idx])
 
             all_labels.extend(labels.tolist())
             all_preds.extend(preds.tolist())
-            all_cnn_preds.extend(cnn_preds.tolist())
+            all_model_preds.extend(model_preds.tolist())
 
         for ax in axes[n_vids:]:
             ax.axis('off')
@@ -253,9 +275,9 @@ class NeuralHMM:
 
         all_preds = np.array(all_preds)
         all_labels = np.array(all_labels)
-        all_cnn_preds = np.array(all_cnn_preds)
+        all_model_preds = np.array(all_model_preds)
 
-        cnn_acc = (all_cnn_preds == all_labels).mean()
+        model_acc = (all_model_preds == all_labels).mean()
         hmm_acc = (all_preds == all_labels).mean()
 
         # Confusion matrix heatmap
@@ -273,7 +295,12 @@ class NeuralHMM:
         plt.close()
         print(f'Heatmap saved to {heatmap_path}')
 
-        print(f'CNN:\taccuracy: {cnn_acc:.3f}')
+        if self.lstm_module:
+            # Separate confusion matrix chart for the LSTM on its own,
+            # without the duration-model smoothing applied above.
+            self.lstm.evaluate(val_vids)
+
+        print(f'{model_label}:\taccuracy: {model_acc:.3f}')
         print(f'HMM:\taccuracy: {hmm_acc:.3f}')
 
     def make_predictions_vid(self, video_path):

@@ -134,6 +134,16 @@ class lstm_classifier:
         checkpoint = torch.load(path, map_location=self.device)
         self.model.load_state_dict(checkpoint['lstm'])
         self.fc.load_state_dict(checkpoint['fc'])
+
+    @torch.no_grad()
+    def predict_probs(self, vid_dataset):
+        # cnn.model must already have its head removed (see load_pretrained_cnn)
+        self.model.eval()
+        self.fc.eval()
+        features, labels = self._extract_features(self.cnn, vid_dataset)
+        logits = self._forward(features)
+        probs = torch.softmax(logits, dim=-1).cpu().numpy()
+        return probs, labels.cpu().numpy()
     
     def evaluate(self, val_vids, save_path='models/hmm_lstm_heatmap.png'):
         all_labels_flat = []
