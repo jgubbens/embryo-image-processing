@@ -16,6 +16,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from cnn_classifier import cnn_classifier
+from lstm_classifier import lstm_classifier
 from embryo_video import embryo_video
 from processing.extract_embryo import extract_embryo
 
@@ -24,25 +25,30 @@ class NeuralHMM:
 
     STATES = ['undetectable', 'NC9', 'NC9M', 'NC10', 'NC10M', 'NC11', 'NC11M', 'NC12', 'NC12M', 'NC13', 'NC13M', 'NC14+']
 
-    def __init__(self, data_dir, device, window_size, preprocess_images=False):
+    def __init__(self, data_dir, device, window_size, preprocess_images=False, lstm_module=False):
         self.data_dir = data_dir
         self.device = device
         self.n_states = len(self.STATES)
         self.window_size = window_size
+        self.lstm_module = lstm_module
         if preprocess_images:
             self.process_training_data()
         self.load_embryo_videos(processed=preprocess_images)
         self.cnn = cnn_classifier(self.device, window_size, self.STATES)
-        self.hidden_size = self.cnn.get_hidden_size()
+        if lstm_module:
+            self.hidden_size = self.cnn.get_hidden_size()
+            self.lstm = lstm_classifier(self.hidden_size, self.device, self.STATES, self.cnn)
     
     def train_hmm(self):
         train_vids, val_vids = train_test_split(
             self.vids, test_size=0.2, random_state=1
         )
         print(f'Validation vids: {[embryo.vid_path for embryo in val_vids]}')
-        self.cnn.train_model(train_vids, val_vids, best_model_path='models/best_hmm_cnn.pt', epochs=10, batch_size=16)
+        # self.cnn.train_model(train_vids, val_vids, best_model_path='models/best_hmm_cnn.pt', epochs=10, batch_size=16)
+        self.cnn.load_from_path('models/best_hmm_cnn.pt')
         self.cnn.model.eval()
         self.cnn.evaluate(val_vids)
+        self.lstm.train_model(train_vids, val_vids, epochs=10, batch_size=16, lr=0.0001)
         self._train_duration_model(train_vids)
         self.save_duration_model()
         self.evaluate(val_vids)
@@ -354,7 +360,7 @@ if __name__ == '__main__':
     )
     print(f'Using device: {DEVICE}')
     # classifier = NeuralHMM('data/hmm_tifs', DEVICE, window_size=1, preprocess_images=True)
-    classifier = NeuralHMM('data/training_data', DEVICE, window_size=1, preprocess_images=True)
+    classifier = NeuralHMM('data/training_data', DEVICE, window_size=1, preprocess_images=True, lstm_module=True)
 
     classifier.train_hmm()
     # classifier.load_pretrained_models()

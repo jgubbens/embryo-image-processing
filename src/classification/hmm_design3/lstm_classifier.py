@@ -15,11 +15,11 @@ class lstm_classifier:
 
     best_model_path = 'models/best_hmm_lstm.pt'
 
-    def __init__(self, hidden_size, device, states, pretrained_cnn):
+    def __init__(self, hidden_size, device, states, cnn):
         self.hidden_size = hidden_size
         self.device = device
         self.STATES = states
-        self.load_pretrained_cnn(pretrained_cnn)
+        self.cnn = cnn
         self._build_model()
         
 
@@ -52,15 +52,17 @@ class lstm_classifier:
         logits = self.fc(lstm_out.squeeze(0))
         return logits
     
-    def load_pretrained_cnn(self, cnn):
+    def load_pretrained_cnn(self):
         # Load and freeze pretrained CNN
-        self.pretrained_cnn = cnn
-        self.pretrained_cnn.model.eval()
-        for p in self.pretrained_cnn.model.parameters():
+        self.cnn.model.eval()
+        self.cnn.remove_head()
+        for p in self.cnn.model.parameters():
             p.requires_grad = False
 
     def train_model(self, train_vids, val_vids, epochs=30, batch_size=16, lr=0.0001):
         print('Training LSTM...')
+
+        self.load_pretrained_cnn()
 
         # Class weights from all training labels
         all_labels = []
@@ -82,18 +84,18 @@ class lstm_classifier:
             train_loss, train_correct, train_total = 0.0, 0, 0
 
             for vid_dataset in tqdm(train_vids, desc=f"Epoch {epoch}/{epochs}"):
-                features, labels = self._extract_features(self.pretrained_cnn, vid_dataset)
+                features, labels = self._extract_features(self.cnn, vid_dataset)
 
                 optimizer.zero_grad()
                 logits = self._forward(features)
                 loss = criterion(logits, labels)
                 loss.backward()
+                optimizer.step()
 
                 train_loss += loss.item() * len(labels)
                 train_correct += (logits.argmax(dim=1) == labels).sum().item()
                 train_total += len(labels)
 
-            optimizer.step()
             train_loss /= train_total
             train_acc = train_correct / train_total
             scheduler.step()
@@ -105,7 +107,7 @@ class lstm_classifier:
 
             with torch.no_grad():
                 for vid_dataset in val_vids:
-                    features, labels = self._extract_features(self.pretrained_cnn, vid_dataset)
+                    features, labels = self._extract_features(self.cnn, vid_dataset)
                     logits = self._forward(features)
                     val_loss += criterion(logits, labels).item() * len(labels)
                     val_correct += (logits.argmax(dim=1) == labels).sum().item()
@@ -148,7 +150,7 @@ class lstm_classifier:
 
         with torch.no_grad():
             for vid_dataset in val_vids:
-                features, labels = self._extract_features(self.pretrained_cnn, vid_dataset)
+                features, labels = self._extract_features(self.cnn, vid_dataset)
                 logits = self._forward(features)
                 val_loss += criterion(logits, labels).item() * len(labels)
                 preds = logits.argmax(dim=1)
