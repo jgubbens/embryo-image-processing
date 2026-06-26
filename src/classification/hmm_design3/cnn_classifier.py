@@ -20,7 +20,6 @@ class cnn_classifier:
         self.device = device
         self.window_size = window_size
         self.STATES = states
-        self.hidden_size = 512
         self._build_model()
     
     def set_seed(self, s=42):
@@ -45,7 +44,8 @@ class cnn_classifier:
         self.model.conv1 = nn.Conv2d(self.window_size, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.model.conv1.weight = nn.Parameter(w)
 
-        self.model.fc = nn.Linear(self.model.fc.in_features, len(self.STATES))
+        self.hidden_size = self.model.fc.in_features
+        self.model.fc = nn.Linear(self.hidden_size, len(self.STATES))
         self.model.to(self.device)
         
         return self.model
@@ -60,6 +60,7 @@ class cnn_classifier:
     
     def train_model(self, train_vids, val_vids, best_model_path, epochs=30, batch_size=16, lr=0.0001):
         print('Training CNN...')
+        self.best_model_path = best_model_path
         dataset = ConcatDataset(train_vids)
         labels = [dataset[i][1] for i in range(len(dataset))]
 
@@ -183,7 +184,3 @@ class cnn_classifier:
     def load_from_path(self, path):
         self.model.load_state_dict(torch.load(path, map_location=self.device))
         self.model.eval()
-
-if __name__ == '__main__':
-    cnn = cnn_classifier(5)
-    cnn.predict()

@@ -25,7 +25,7 @@ class lstm_classifier:
 
     def _build_model(self):
         self.model = nn.LSTM(
-            input_size=512,
+            input_size=self.cnn.get_hidden_size(),
             hidden_size=self.hidden_size,
             num_layers=2,
             batch_first=True,
@@ -134,6 +134,16 @@ class lstm_classifier:
         checkpoint = torch.load(path, map_location=self.device)
         self.model.load_state_dict(checkpoint['lstm'])
         self.fc.load_state_dict(checkpoint['fc'])
+
+    @torch.no_grad()
+    def predict_step(self, feature, hidden_state=None):
+        self.model.eval()
+        self.fc.eval()
+        x = feature.view(1, 1, -1).to(self.device)
+        lstm_out, hidden_state = self.model(x, hidden_state)
+        logits = self.fc(lstm_out.squeeze(0))
+        probs = torch.softmax(logits, dim=-1).cpu().numpy().squeeze()
+        return probs, hidden_state
 
     @torch.no_grad()
     def predict_probs(self, vid_dataset):

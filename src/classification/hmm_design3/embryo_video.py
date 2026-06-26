@@ -29,10 +29,10 @@ class embryo_video(Dataset):
         return labels
 
     def __len__(self):
-        return self.get_frame_count()
+        return max(0, self.get_frame_count() - self.window_size + 1)
 
     def __getitem__(self, idx):
-        frame = idx + 1 # convert to 1 indexing to match labels
+        frame = idx + self.window_size # last (1-indexed) frame of the window
         window = self.get_frame_window(frame)
         window = self._preprocess(window)
         return window, self.frame_labels[frame]
