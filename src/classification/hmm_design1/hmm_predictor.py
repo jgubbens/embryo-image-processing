@@ -4,8 +4,8 @@ from scipy.stats import norm
 import tifffile
 import torch
 
-from cnn_classifier import cnn_classifier
-from lstm_classifier import lstm_classifier
+from classification.cnn_classifier import cnn_classifier
+from classification.lstm_classifier import lstm_classifier
 
 class HMM_Predictor:
 

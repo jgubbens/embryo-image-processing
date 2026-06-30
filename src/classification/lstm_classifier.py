@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import ConcatDataset, DataLoader
 
-from cnn_classifier import cnn_classifier
+from classification.cnn_classifier import cnn_classifier
 
 # LSTM to learn trends from CNN features
 
