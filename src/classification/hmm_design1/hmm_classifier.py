@@ -335,7 +335,7 @@ if __name__ == '__main__':
     )
     print(f'Using device: {DEVICE}')
     # classifier = NeuralHMM('data/hmm_tifs', DEVICE, window_size=1, preprocess_images=True)
-    classifier = NeuralHMM('data/training_data', DEVICE, window_size=5, preprocess_images=True, lstm_module=False, img_size=(800, 800))
+    classifier = NeuralHMM('data/training_data', DEVICE, window_size=5, preprocess_images=False, lstm_module=False, img_size=(800, 800))
 
     classifier.train_hmm()
     # classifier.load_pretrained_models()

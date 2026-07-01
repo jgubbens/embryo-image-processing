@@ -87,7 +87,11 @@ def _orientation_matrix(mask: np.ndarray, output_size: tuple[int, int]) -> np.nd
     scale_translate_h = np.vstack([scale_translate, [0.0, 0.0, 1.0]])
     return (scale_translate_h @ rotation_h)[:2]
 
-def extract_embryo(input_path: Path | np.ndarray, output_path: Path | None = None, gpu: bool = True) -> np.ndarray:
+def load_model(gpu: bool = True) -> models.CellposeModel:
+    return models.CellposeModel(gpu=gpu, pretrained_model=CELLPOSE_MODEL)
+
+
+def extract_embryo(input_path: Path | np.ndarray, output_path: Path | None = None, gpu: bool = True, model: models.CellposeModel | None = None) -> np.ndarray:
     if isinstance(input_path, np.ndarray):
         stack = input_path
     else:
@@ -98,12 +102,13 @@ def extract_embryo(input_path: Path | np.ndarray, output_path: Path | None = Non
     if single_frame:
         stack = stack[np.newaxis]
 
-    print("Loading Cellpose model")
-    model = models.CellposeModel(gpu=gpu, pretrained_model=CELLPOSE_MODEL)
+    if model is None:
+        print("Loading Cellpose model")
+        model = load_model(gpu=gpu)
 
     masks, confidences = [], []
     for i, frame in enumerate(stack):
-        print(f"Segmenting frame {i}")
+        # print(f"Segmenting frame {i}")
         mask, conf = _segment_frame(model, frame)
         masks.append(mask)
         confidences.append(conf)
