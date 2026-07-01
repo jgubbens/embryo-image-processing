@@ -13,13 +13,12 @@
 #SBATCH --mail-user=jgubbs64@gmail.com
 
 # --- Environment setup ------------------------------------------------------
-# Adroit uses environment modules. Load a modern Python and CUDA toolkit.
-module purge
-module load anaconda3/2024.6   # provides a recent python for uv to bootstrap from
-module load cudatoolkit/12.4   # match the CUDA your torch wheels expect
-
+# No environment modules needed: uv manages its own Python, and the PyTorch
+# wheels bundle their own CUDA runtime (the node's NVIDIA driver is enough).
+#
 # uv manages the project venv (see pyproject.toml / uv.lock).
-# Install once on the login node with: curl -LsSf https://astral.sh/uv/install.sh | sh
+# Install it once on the login node with:
+#   curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 
 # Run from the repository root so the relative paths in hmm_classifier.py
