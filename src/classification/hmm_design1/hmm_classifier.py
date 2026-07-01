@@ -15,9 +15,9 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from cnn_classifier import cnn_classifier
-from lstm_classifier import lstm_classifier
-from embryo_video import embryo_video
+from classification.cnn_classifier import cnn_classifier
+from classification.lstm_classifier import lstm_classifier
+from classification.embryo_video import embryo_video
 from processing.extract_embryo import extract_embryo
 
 
@@ -74,8 +74,8 @@ class NeuralHMM:
                 vid_path = Path(self.data_dir, 'processed_tifs', f'{embryo}.tif')
             else:
                 #vid_path = Path(self.data_dir, 'labeled_tifs', f'{embryo}.tif')
-                vid_path = Path(self.data_dir, 'histone', f'{embryo}.tif')
-                # vid_path = Path(self.data_dir, 'brightfield', f'{embryo}.tif')
+                # vid_path = Path(self.data_dir, 'histone', f'{embryo}.tif')
+                vid_path = Path(self.data_dir, 'brightfield', f'{embryo}.tif')
             self.vids.append(embryo_video(yaml_data[embryo], vid_path, self.STATES, window_size=self.window_size, img_size=self.img_size))
 
     def _load_annotations(self) -> dict:

@@ -14,23 +14,48 @@ OUTPUT_SIZE = (800, 800)
 
 MASK_FILL_FRACTION = 0.9
 MASK_PADDING_FRACTION = 0.05
+CONFIDENCE_THRESHOLD = 0.5
+MAX_SIZE_DEVIATION = 0.5    # reject masks whose area differs from the median by more than this fraction
+MAX_CENTROID_DEVIATION = 0.2  # reject masks whose centroid differs from the median by more than this fraction of the frame size
 
-def _segment_frame(model, frame: np.ndarray, segment_size=(100, 100)) -> np.ndarray:
+def _segment_frame(model, frame: np.ndarray, segment_size=(100, 100)) -> tuple[np.ndarray, float]:
     norm = cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     enhanced = clahe.apply(norm)
     small = cv2.resize(enhanced, segment_size)
     transformed = convert_image(small)
-    masks = model.eval(transformed, normalize=True)[0]
+    masks, flows, _ = model.eval(transformed, normalize=True)
 
     if masks.max() == 0:
         print('No mask found')
-        return np.zeros(frame.shape[:2], dtype=bool)
-    
+        return np.zeros(frame.shape[:2], dtype=bool), 0.0
+
     labels, counts = np.unique(masks[masks > 0], return_counts=True)
     biggest = labels[np.argmax(counts)]
-    big_mask = cv2.resize((masks == biggest).astype(np.float32), (frame.shape[1], frame.shape[0])) > 0.5
-    return big_mask
+    big_mask_small = masks == biggest
+    confidence = float(flows[2][big_mask_small].mean())
+    big_mask = cv2.resize(big_mask_small.astype(np.float32), (frame.shape[1], frame.shape[0])) > 0.5
+    return big_mask, confidence
+
+
+def _filter_masks(masks: list[np.ndarray], confidences: list[float]) -> list[int]:
+    """Return frame indices whose masks pass confidence and consistency checks."""
+    candidates = [i for i, (m, c) in enumerate(zip(masks, confidences))
+                  if m.any() and c >= CONFIDENCE_THRESHOLD]
+    if not candidates:
+        return []
+
+    areas = np.array([masks[i].sum() for i in candidates], dtype=float)
+    centroids = np.array([np.mean(np.nonzero(masks[i]), axis=1) for i in candidates])
+
+    median_area = np.median(areas)
+    median_centroid = np.median(centroids, axis=0)
+
+    h, w = masks[0].shape
+    size_ok = np.abs(areas - median_area) / median_area <= MAX_SIZE_DEVIATION
+    centroid_ok = np.linalg.norm(centroids - median_centroid, axis=1) / max(h, w) <= MAX_CENTROID_DEVIATION
+
+    return [candidates[i] for i in range(len(candidates)) if size_ok[i] and centroid_ok[i]]
 
 def _pad_mask(mask: np.ndarray, fraction: float = MASK_PADDING_FRACTION) -> np.ndarray:
     _, _, w, h = cv2.boundingRect(mask.astype(np.uint8))
@@ -76,22 +101,25 @@ def extract_embryo(input_path: Path | np.ndarray, output_path: Path | None = Non
     print("Loading Cellpose model")
     model = models.CellposeModel(gpu=gpu, pretrained_model=CELLPOSE_MODEL)
 
-    mask = None
+    masks, confidences = [], []
     for i, frame in enumerate(stack):
         print(f"Segmenting frame {i}")
-        candidate = _segment_frame(model, frame)
-        if not candidate.any():
-            continue
-        mask = candidate
-        break
+        mask, conf = _segment_frame(model, frame)
+        masks.append(mask)
+        confidences.append(conf)
 
-    if mask is None:
-        raise RuntimeError("Cellpose found no embryo in any frame.")
+    valid = _filter_masks(masks, confidences)
+    if not valid:
+        raise RuntimeError("No valid embryo mask found across all frames.")
 
-    mask = _pad_mask(mask)
-    transform = _orientation_matrix(mask, OUTPUT_SIZE)
-    out_mask = cv2.warpAffine(mask.astype(np.uint8), transform, OUTPUT_SIZE) > 0
-    out_frames = [cv2.warpAffine(frame, transform, OUTPUT_SIZE) * out_mask for frame in stack]
+    valid_set = set(valid)
+    out_frames = []
+    for i, frame in enumerate(stack):
+        ref = i if i in valid_set else min(valid, key=lambda v, i=i: abs(v - i))
+        padded = _pad_mask(masks[ref])
+        transform = _orientation_matrix(padded, OUTPUT_SIZE)
+        out_mask = cv2.warpAffine(padded.astype(np.uint8), transform, OUTPUT_SIZE) > 0
+        out_frames.append(cv2.warpAffine(frame, transform, OUTPUT_SIZE) * out_mask)
 
     resized_result = np.stack(out_frames, axis=0)
     if single_frame:
