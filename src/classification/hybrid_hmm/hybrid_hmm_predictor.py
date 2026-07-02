@@ -7,7 +7,7 @@ import torch
 from classification.cnn_classifier import cnn_classifier
 from classification.lstm_classifier import lstm_classifier
 
-class HMM_Predictor:
+class Hybrid_HMM_Predictor:
 
     STATES = ['undetectable', 'NC9', 'NC9M', 'NC10', 'NC10M', 'NC11', 'NC11M', 'NC12', 'NC12M', 'NC13', 'NC13M', 'NC14+']
 
@@ -140,7 +140,7 @@ if __name__ == "__main__":
     print(f'Using device: {DEVICE}')
 
     # predictor = HMM_Predictor(DEVICE, 'models/model_info.json', time_between_frames=150)
-    predictor = HMM_Predictor(DEVICE, 'models/model_info.json', time_between_frames=60)
+    predictor = Hybrid_HMM_Predictor(DEVICE, 'models/model_info.json', time_between_frames=60)
     
     # Test live classifier
     print('Testing live classifier')

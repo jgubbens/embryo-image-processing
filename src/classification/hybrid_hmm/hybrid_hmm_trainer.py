@@ -21,7 +21,7 @@ from classification.embryo_video import embryo_video
 from processing.extract_embryo import extract_embryo
 
 
-class NeuralHMM:
+class Hybrid_HMM:
 
     STATES = ['undetectable', 'NC9', 'NC9M', 'NC10', 'NC10M', 'NC11', 'NC11M', 'NC12', 'NC12M', 'NC13', 'NC13M', 'NC14+']
 
@@ -44,27 +44,32 @@ class NeuralHMM:
             self.lstm = lstm_classifier(self.hidden_size, self.device, self.STATES, self.cnn)
     
     def train_hmm(self):
-        train_vids, val_vids = train_test_split(
+        self.train_vids, self.val_vids = train_test_split(
             self.vids, test_size=0.2, random_state=1
         )
-        print(f'Validation vids: {[embryo.vid_path for embryo in val_vids]}')
-        self.cnn.train_model(train_vids, val_vids, best_model_path=self.cnn.best_model_path, epochs=10, batch_size=16)
+        print(f'Validation vids: {[embryo.vid_path for embryo in self.val_vids]}')
+        self.cnn.train_model(self.train_vids, self.val_vids, best_model_path=self.cnn.best_model_path, epochs=10, batch_size=16)
         self.cnn.model.eval()
-        self.cnn.evaluate(val_vids)
+        self.cnn.evaluate(self.val_vids)
         if self.lstm_module:
-            self.lstm.train_model(train_vids, val_vids, epochs=10, batch_size=16, lr=0.0001)
-            self.lstm.evaluate(val_vids)
-        self._train_duration_model(train_vids)
-        self.save_model_info(train_vids, val_vids)
-        self.evaluate(val_vids)
+            self.lstm.train_model(self.train_vids, self.val_vids, epochs=10, batch_size=16, lr=0.0001)
+            self.lstm.evaluate(self.val_vids)
+        self._train_duration_model()
+        self.save_model_info()
+        self.evaluate()
 
     def load_pretrained_models(self):
         info = self.load_model_info()
+        self.duration_model = {int(k): v for k, v in info['duration_model'].items()}
         self.cnn.load_from_path(info['cnn_model_path'])
         self.cnn.model.eval()
         if self.lstm_module:
             self.cnn.remove_head()
             self.lstm.load_from_path(info['lstm_model_path'])
+        val_paths = set(info['val_vid_paths'])
+        train_paths = set(info['train_vid_paths'])
+        self.val_vids = [vid for vid in self.vids if str(vid.vid_path) in val_paths]
+        self.train_vids = [vid for vid in self.vids if str(vid.vid_path) in train_paths]
     
     def load_embryo_videos(self, processed):
         yaml_data = self._load_annotations()
@@ -75,16 +80,17 @@ class NeuralHMM:
             else:
                 #vid_path = Path(self.data_dir, 'labeled_tifs', f'{embryo}.tif')
                 # vid_path = Path(self.data_dir, 'histone', f'{embryo}.tif')
-                vid_path = Path(self.data_dir, 'brightfield', f'{embryo}.tif')
+                # vid_path = Path(self.data_dir, 'brightfield', f'{embryo}.tif')
+                vid_path = Path(self.data_dir, 'processed_tifs', f'{embryo}.tif')
             self.vids.append(embryo_video(yaml_data[embryo], vid_path, self.STATES, window_size=self.window_size, img_size=self.img_size))
 
     def _load_annotations(self) -> dict:
         with open(Path(self.data_dir, 'labels.yaml')) as f:
             return yaml.safe_load(f)
         
-    def _train_duration_model(self, vids):
+    def _train_duration_model(self):
         durations = {i: [] for i in range(self.n_states)}
-        for vid in vids:
+        for vid in self.train_vids:
             labels = list(vid.frame_labels.values())
             current_state = labels[0]
             count = 1
@@ -104,15 +110,15 @@ class NeuralHMM:
             if d:
                 self.duration_model[state] = {'mean': np.mean(d), 'std': np.std(d) + 1e-6}
 
-    def save_model_info(self, train_vids, val_vids, path='models/model_info.json'):
+    def save_model_info(self, path='models/model_info.json'):
         info = {
             'window_size': self.window_size,
             'lstm_module': self.lstm_module,
             'preprocess_images': self.preprocess_images,
             'cnn_model_path': self.cnn.best_model_path,
             'lstm_model_path': self.lstm.best_model_path if self.lstm_module else None,
-            'train_vid_paths': [str(vid.vid_path) for vid in train_vids],
-            'val_vid_paths': [str(vid.vid_path) for vid in val_vids],
+            'train_vid_paths': [str(vid.vid_path) for vid in self.train_vids],
+            'val_vid_paths': [str(vid.vid_path) for vid in self.val_vids],
             'duration_model': {str(state): stats for state, stats in self.duration_model.items()},
         }
         if self.preprocess_images:
@@ -124,7 +130,6 @@ class NeuralHMM:
     def load_model_info(self, path='models/model_info.json'):
         with open(path) as f:
             info = json.load(f)
-        self.duration_model = {int(k): v for k, v in info['duration_model'].items()}
         return info
 
     def _get_duration_probs(self, current_state, seconds_in_state):
@@ -244,7 +249,7 @@ class NeuralHMM:
 
         return labels, preds, model_preds
 
-    def evaluate(self, val_vids):
+    def evaluate(self):
         all_preds = []
         all_labels = []
         all_model_preds = []
@@ -252,7 +257,7 @@ class NeuralHMM:
         model_label = 'LSTM' if self.lstm_module else 'CNN'
 
         # Progression plots
-        n_vids = len(val_vids)
+        n_vids = len(self.val_vids)
         ncols = 2
         nrows = int(np.ceil(n_vids / ncols))
 
@@ -264,7 +269,7 @@ class NeuralHMM:
         )
         axes = axes.flatten()
 
-        for vid_idx, vid in enumerate(val_vids):
+        for vid_idx, vid in enumerate(self.val_vids):
             labels, preds, model_preds = self._evaluate_sample(vid, ax=axes[vid_idx])
 
             all_labels.extend(labels.tolist())
@@ -306,7 +311,7 @@ class NeuralHMM:
         print(f'Heatmap saved to {heatmap_path}')
 
         if self.lstm_module:
-            self.lstm.evaluate(val_vids)
+            self.lstm.evaluate(self.val_vids)
 
         print(f'{model_label}:\taccuracy: {model_acc:.3f}')
         print(f'HMM:\taccuracy: {hmm_acc:.3f}')
@@ -335,7 +340,9 @@ if __name__ == '__main__':
     )
     print(f'Using device: {DEVICE}')
     # classifier = NeuralHMM('data/hmm_tifs', DEVICE, window_size=1, preprocess_images=True)
-    classifier = NeuralHMM('data/training_data', DEVICE, window_size=5, preprocess_images=False, lstm_module=False, img_size=(800, 800))
+    classifier = Hybrid_HMM('data/training_data', DEVICE, window_size=5, preprocess_images=False, lstm_module=False, img_size=(800, 800))
 
-    classifier.train_hmm()
-    # classifier.load_pretrained_models()
+    # classifier.train_hmm()
+    classifier.load_pretrained_models()
+    classifier.evaluate()
+    
