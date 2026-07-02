@@ -54,13 +54,13 @@ class HMMDesign1:
         if self.lstm_module:
             self.lstm.train_model(self.train_vids, self.val_vids, epochs=10, batch_size=16, lr=0.0001)
             self.lstm.evaluate(self.val_vids)
-        self._train_duration_model()
+        self.create_transition_matrix()
         self.save_model_info()
         self.evaluate()
 
     def load_pretrained_models(self):
         info = self.load_model_info()
-        self.duration_model = {int(k): v for k, v in info['duration_model'].items()}
+        self.transition_matrix = np.array(info['transition_matrix'])
         self.cnn.load_from_path(info['cnn_model_path'])
         self.cnn.model.eval()
         if self.lstm_module:
@@ -87,28 +87,6 @@ class HMMDesign1:
     def _load_annotations(self) -> dict:
         with open(Path(self.data_dir, 'labels.yaml')) as f:
             return yaml.safe_load(f)
-        
-    def _train_duration_model(self):
-        durations = {i: [] for i in range(self.n_states)}
-        for vid in self.train_vids:
-            labels = list(vid.frame_labels.values())
-            current_state = labels[0]
-            count = 1
-            for t in range(1, len(labels)):
-                if labels[t] == current_state:
-                    count += 1
-                else:
-                    duration_seconds = count * vid.time_between_frames
-                    durations[current_state].append(duration_seconds)
-                    current_state = labels[t]
-                    count = 1
-            duration_seconds = count * vid.time_between_frames
-            durations[current_state].append(duration_seconds)
-
-        self.duration_model = {}
-        for state, d in durations.items():
-            if d:
-                self.duration_model[state] = {'mean': np.mean(d), 'std': np.std(d) + 1e-6}
     
     def create_transition_matrix(self):
         counts = np.zeros((self.n_states, self.n_states))
@@ -123,26 +101,26 @@ class HMMDesign1:
 
     # Based off of geeksforgeeks implementation
     # https://www.geeksforgeeks.org/artificial-intelligence/viterbi-algorithm-for-hidden-markov-models-hmms/
-    def viterbi(obs, states, start_p, trans_p, emit_p):
+    def viterbi(self, obs, start_p, trans_p, emit_p):
         V = [{}]
         path = {}
 
-        for y in states:
+        for y in self.STATES:
             V[0][y] = start_p[y] * emit_p[y][obs[0]]
             path[y] = [y]
 
         for t in range(1, len(obs)):
             V.append({})
             newpath = {}
-            for y in states:
+            for y in self.STATES:
                 (prob, state) = max(
-                    [(V[t-1][y0] * trans_p[y0][y] * emit_p[y][obs[t]], y0) for y0 in states]
+                    [(V[t-1][y0] * trans_p[y0][y] * emit_p[y][obs[t]], y0) for y0 in self.STATES]
                 )
                 V[t][y] = prob
                 newpath[y] = path[state] + [y]
             path = newpath
 
-        (prob, state) = max([(V[-1][y], y) for y in states])
+        (prob, state) = max([(V[-1][y], y) for y in self.STATES])
         return (prob, path[state])
 
     def save_model_info(self, path='models/pure_hmm_model_info.json'):
@@ -154,7 +132,7 @@ class HMMDesign1:
             'lstm_model_path': self.lstm.best_model_path if self.lstm_module else None,
             'train_vid_paths': [str(vid.vid_path) for vid in self.train_vids],
             'val_vid_paths': [str(vid.vid_path) for vid in self.val_vids],
-            'duration_model': {str(state): stats for state, stats in self.duration_model.items()},
+            'transition_matrix': self.transition_matrix.tolist(),
         }
         if self.preprocess_images:
             info['img_size'] = list(self.img_size)
@@ -166,27 +144,6 @@ class HMMDesign1:
         with open(path) as f:
             info = json.load(f)
         return info
-
-    def _get_duration_probs(self, current_state, seconds_in_state):
-        probs = np.zeros(self.n_states)
-
-        if current_state is None:
-            return np.ones(self.n_states) / self.n_states
-
-        if current_state in self.duration_model:
-            d = self.duration_model[current_state]
-            p_stay = 1 - norm.cdf(seconds_in_state, d['mean'], d['std'])
-            # Only allow undetectable to jump to NC9
-            probs[current_state] = p_stay
-            if current_state + 1 < self.n_states:
-                probs[current_state + 1] = 1 - p_stay
-            else:
-                probs[current_state] = 1.0
-        else:
-            probs[current_state] = 1.0
-
-        probs /= probs.sum() + 1e-9
-        return probs
 
     def _evaluate_sample(self, vid, ax=None):
         print(f'Inferring for sample {vid.vid_path}')
