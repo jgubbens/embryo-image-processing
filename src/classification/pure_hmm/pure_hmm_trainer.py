@@ -21,7 +21,7 @@ from classification.embryo_video import embryo_video
 from processing.extract_embryo import extract_embryo
 
 
-class HMMDesign1:
+class HMM_Trainer:
 
     STATES = ['undetectable', 'NC9', 'NC9M', 'NC10', 'NC10M', 'NC11', 'NC11M', 'NC12', 'NC12M', 'NC13', 'NC13M', 'NC14+']
 
@@ -48,7 +48,9 @@ class HMMDesign1:
             self.vids, test_size=0.2, random_state=1
         )
         print(f'Validation vids: {[embryo.vid_path for embryo in self.val_vids]}')
-        self.cnn.train_model(self.train_vids, self.val_vids, best_model_path=self.cnn.best_model_path, epochs=10, batch_size=16)
+        # self.cnn.train_model(self.train_vids, self.val_vids, best_model_path=self.cnn.best_model_path, epochs=10, batch_size=16)
+        info = self.load_model_info(path='models/pure_hmm_model_info.json')
+        self.cnn.load_from_path(info['cnn_model_path'])
         self.cnn.model.eval()
         self.cnn.evaluate(self.val_vids)
         if self.lstm_module:
@@ -80,8 +82,8 @@ class HMMDesign1:
             else:
                 #vid_path = Path(self.data_dir, 'labeled_tifs', f'{embryo}.tif')
                 # vid_path = Path(self.data_dir, 'histone', f'{embryo}.tif')
-                # vid_path = Path(self.data_dir, 'brightfield', f'{embryo}.tif')
-                vid_path = Path(self.data_dir, 'processed_tifs', f'{embryo}.tif')
+                vid_path = Path(self.data_dir, 'brightfield', f'{embryo}.tif')
+                # vid_path = Path(self.data_dir, 'processed_tifs', f'{embryo}.tif')
             self.vids.append(embryo_video(yaml_data[embryo], vid_path, self.STATES, window_size=self.window_size, img_size=self.img_size))
 
     def _load_annotations(self) -> dict:
@@ -97,31 +99,33 @@ class HMMDesign1:
         row_sums = counts.sum(axis=1, keepdims=True)
         row_sums[row_sums == 0] = 1
         self.transition_matrix = counts / row_sums
+        self.transition_matrix[0] = 0.0
+        self.transition_matrix[0][0] = 0.5
+        self.transition_matrix[0][1] = 0.5
         return self.transition_matrix
 
-    # Based off of geeksforgeeks implementation
-    # https://www.geeksforgeeks.org/artificial-intelligence/viterbi-algorithm-for-hidden-markov-models-hmms/
-    def viterbi(self, obs, start_p, trans_p, emit_p):
-        V = [{}]
-        path = {}
+    def viterbi(self, obs_probs):
+        T, n = obs_probs.shape
+        log_trans = np.log(self.transition_matrix + 1e-10)
+        log_emit = np.log(obs_probs + 1e-10)
 
-        for y in self.STATES:
-            V[0][y] = start_p[y] * emit_p[y][obs[0]]
-            path[y] = [y]
+        dp = np.full((T, n), -np.inf)
+        backptr = np.zeros((T, n), dtype=int)
 
-        for t in range(1, len(obs)):
-            V.append({})
-            newpath = {}
-            for y in self.STATES:
-                (prob, state) = max(
-                    [(V[t-1][y0] * trans_p[y0][y] * emit_p[y][obs[t]], y0) for y0 in self.STATES]
-                )
-                V[t][y] = prob
-                newpath[y] = path[state] + [y]
-            path = newpath
+        # Uniform start distribution
+        dp[0] = log_emit[0] - np.log(n)
 
-        (prob, state) = max([(V[-1][y], y) for y in self.STATES])
-        return (prob, path[state])
+        for t in range(1, T):
+            candidates = dp[t - 1, :, None] + log_trans
+            backptr[t] = np.argmax(candidates, axis=0)
+            dp[t] = candidates[backptr[t], np.arange(n)] + log_emit[t]
+
+        best_path = np.zeros(T, dtype=int)
+        best_path[-1] = np.argmax(dp[-1])
+        for t in range(T - 2, -1, -1):
+            best_path[t] = backptr[t + 1, best_path[t + 1]]
+
+        return float(dp[-1, best_path[-1]]), best_path.tolist()
 
     def save_model_info(self, path='models/pure_hmm_model_info.json'):
         info = {
@@ -147,12 +151,9 @@ class HMMDesign1:
 
     def _evaluate_sample(self, vid, ax=None):
         print(f'Inferring for sample {vid.vid_path}')
-        current_state = None
-        frames_in_state = 0
 
         labels = []
-        preds = []
-        model_preds = []
+        all_probs = []
 
         model_label = 'LSTM' if self.lstm_module else 'CNN'
         model_color = 'tab:purple' if self.lstm_module else 'tab:green'
@@ -162,6 +163,7 @@ class HMMDesign1:
 
         for t in range(len(vid)):
             frame, label = vid[t]
+            labels.append(label)
 
             if self.lstm_module:
                 model_probs = seq_probs[t]
@@ -170,25 +172,12 @@ class HMMDesign1:
                     frame = frame.unsqueeze(0).to(self.device)
                     logits = self.cnn.model(frame)
                     model_probs = torch.softmax(logits, dim=-1).cpu().numpy().squeeze()
-            model_pred = np.argmax(model_probs)
 
-            seconds_in_state = frames_in_state * vid.time_between_frames
-            duration_probs = self._get_duration_probs(current_state, seconds_in_state)
+            all_probs.append(model_probs)
 
-            combined = model_probs * duration_probs
-            combined /= combined.sum()
-            prediction = np.argmax(combined)
-            prediction = max(prediction, current_state or 0)
-
-            labels.append(label)
-            preds.append(prediction)
-            model_preds.append(model_pred)
-
-            if prediction == current_state:
-                frames_in_state += 1
-            else:
-                current_state = prediction
-                frames_in_state = 1
+        obs_probs = np.stack(all_probs)
+        model_preds = np.argmax(obs_probs, axis=1).tolist()
+        _, preds = self.viterbi(obs_probs)
 
         labels = np.array(labels)
         preds = np.array(preds)
@@ -321,8 +310,8 @@ if __name__ == '__main__':
     )
     print(f'Using device: {DEVICE}')
     # classifier = NeuralHMM('data/hmm_tifs', DEVICE, window_size=1, preprocess_images=True)
-    classifier = HMMDesign1('data/training_data', DEVICE, window_size=5, preprocess_images=False, lstm_module=False, img_size=(800, 800))
+    classifier = HMM_Trainer('data/training_data', DEVICE, window_size=5, preprocess_images=False, lstm_module=False, img_size=(800, 800))
 
-    # classifier.train_hmm()
-    classifier.load_pretrained_models()
-    classifier.evaluate()
+    classifier.train_hmm()
+    # classifier.load_pretrained_models()
+    # classifier.evaluate()

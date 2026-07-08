@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "pyclm",
     "cellpose>=4.1.1",
     "magicgui>=0.10.2",
     "matplotlib>=3.7.0",
@@ -22,3 +23,13 @@ dependencies = [
     "tqdm>=4.68.2",
     "xarray>=2026.4.0",
 ]
+
+[tool.uv.sources]
+pyclm = { path = "../PyCLM", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/classification", "src/processing", "src/augmentation"]

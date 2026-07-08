@@ -49,6 +49,8 @@ class Hybrid_HMM:
         )
         print(f'Validation vids: {[embryo.vid_path for embryo in self.val_vids]}')
         self.cnn.train_model(self.train_vids, self.val_vids, best_model_path=self.cnn.best_model_path, epochs=10, batch_size=16)
+        # info = self.load_model_info(path='models/model_info.json')
+        # self.cnn.load_from_path(info['cnn_model_path'])
         self.cnn.model.eval()
         self.cnn.evaluate(self.val_vids)
         if self.lstm_module:
@@ -80,8 +82,8 @@ class Hybrid_HMM:
             else:
                 #vid_path = Path(self.data_dir, 'labeled_tifs', f'{embryo}.tif')
                 # vid_path = Path(self.data_dir, 'histone', f'{embryo}.tif')
-                # vid_path = Path(self.data_dir, 'brightfield', f'{embryo}.tif')
-                vid_path = Path(self.data_dir, 'processed_tifs', f'{embryo}.tif')
+                vid_path = Path(self.data_dir, 'brightfield', f'{embryo}.tif')
+                # vid_path = Path(self.data_dir, 'processed_tifs', f'{embryo}.tif')
             self.vids.append(embryo_video(yaml_data[embryo], vid_path, self.STATES, window_size=self.window_size, img_size=self.img_size))
 
     def _load_annotations(self) -> dict:
@@ -135,29 +137,17 @@ class Hybrid_HMM:
     def _get_duration_probs(self, current_state, seconds_in_state):
         probs = np.zeros(self.n_states)
 
-        if current_state is None:
+        if current_state is None or current_state == 0:
             return np.ones(self.n_states) / self.n_states
 
         if current_state in self.duration_model:
             d = self.duration_model[current_state]
             p_stay = 1 - norm.cdf(seconds_in_state, d['mean'], d['std'])
-            # Only allow undetectable to jump to NC9
             probs[current_state] = p_stay
             if current_state + 1 < self.n_states:
                 probs[current_state + 1] = 1 - p_stay
             else:
                 probs[current_state] = 1.0
-            # Allow undetectable to jump to any state
-            # if current_state == 0:
-            #     probs[0] = p_stay
-            #     remaining = (1 - p_stay) / (self.n_states - 1)
-            #     probs[1:] = remaining
-            # else:
-            #     probs[current_state] = p_stay
-            #     if current_state + 1 < self.n_states:
-            #         probs[current_state + 1] = 1 - p_stay
-            #     else:
-            #         probs[current_state] = 1.0
         else:
             probs[current_state] = 1.0
 
@@ -342,7 +332,7 @@ if __name__ == '__main__':
     # classifier = NeuralHMM('data/hmm_tifs', DEVICE, window_size=1, preprocess_images=True)
     classifier = Hybrid_HMM('data/training_data', DEVICE, window_size=5, preprocess_images=False, lstm_module=False, img_size=(800, 800))
 
-    # classifier.train_hmm()
-    classifier.load_pretrained_models()
-    classifier.evaluate()
+    classifier.train_hmm()
+    # classifier.load_pretrained_models()
+    # classifier.evaluate()
     

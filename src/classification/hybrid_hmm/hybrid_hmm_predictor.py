@@ -62,7 +62,7 @@ class Hybrid_HMM_Predictor:
     def _get_duration_probs(self, current_state, seconds_in_state):
         probs = np.zeros(self.n_states)
 
-        if current_state is None:
+        if current_state is None or current_state == 0:
             return np.ones(self.n_states) / self.n_states
 
         if current_state in self.duration_model:
@@ -140,11 +140,11 @@ if __name__ == "__main__":
     print(f'Using device: {DEVICE}')
 
     # predictor = HMM_Predictor(DEVICE, 'models/model_info.json', time_between_frames=150)
-    predictor = Hybrid_HMM_Predictor(DEVICE, 'models/model_info.json', time_between_frames=60)
+    predictor = Hybrid_HMM_Predictor(DEVICE, 'models/model_info.json', time_between_frames=60, img_size=(800,800))
     
     # Test live classifier
     print('Testing live classifier')
-    test_vid = tifffile.imread("data/training_data/processed_tifs/embryo3.tif")
+    test_vid = tifffile.imread("data/training_data/brightfield/embryo3.tif")
     # test_vid = tifffile.imread("data/hmm_tifs/processed_tifs/NCEmbryo34.tif")
     for frame in test_vid:
         predictor.predict_frame(torch.tensor(frame))
