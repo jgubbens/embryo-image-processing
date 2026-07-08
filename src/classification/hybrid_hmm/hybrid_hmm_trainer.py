@@ -122,9 +122,8 @@ class Hybrid_HMM:
             'train_vid_paths': [str(vid.vid_path) for vid in self.train_vids],
             'val_vid_paths': [str(vid.vid_path) for vid in self.val_vids],
             'duration_model': {str(state): stats for state, stats in self.duration_model.items()},
+            'img_size': list(self.img_size),
         }
-        if self.preprocess_images:
-            info['img_size'] = list(self.img_size)
         with open(path, 'w') as f:
             json.dump(info, f, indent=2)
         print(f'Model info saved to {path}')

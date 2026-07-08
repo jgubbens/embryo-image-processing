@@ -11,24 +11,19 @@ class Hybrid_HMM_Predictor:
 
     STATES = ['undetectable', 'NC9', 'NC9M', 'NC10', 'NC10M', 'NC11', 'NC11M', 'NC12', 'NC12M', 'NC13', 'NC13M', 'NC14+']
 
-    def __init__(self, device, model_info_path, time_between_frames, img_size=None):
+    def __init__(self, device, model_info_path, time_between_frames):
         self.device = device
         self.n_states = len(self.STATES)
-        self.load_pretrained_models(model_info_path, img_size)
+        self.load_pretrained_models(model_info_path)
         self.initialize_live_prediction(time_between_frames)
 
-    def load_pretrained_models(self, model_info_path, img_size):
+    def load_pretrained_models(self, model_info_path):
         with open(model_info_path) as f:
             info = json.load(f)
         self.window_size = info['window_size']
         self.lstm_module = info['lstm_module']
         self.duration_model = {int(k): v for k, v in info['duration_model'].items()}
-        if info['preprocess_images']:
-            self.live_img_size = tuple(info['img_size'])
-        else:
-            if img_size is None:
-                raise ValueError('img_size must be provided when the model was trained with preprocess_images=False')
-            self.live_img_size = img_size
+        self.live_img_size = tuple(info['img_size'])
         self.cnn = cnn_classifier(self.device, self.window_size, self.STATES)
         self.cnn.model.eval()
         self.cnn.load_from_path(info['cnn_model_path'])
@@ -140,7 +135,7 @@ if __name__ == "__main__":
     print(f'Using device: {DEVICE}')
 
     # predictor = HMM_Predictor(DEVICE, 'models/model_info.json', time_between_frames=150)
-    predictor = Hybrid_HMM_Predictor(DEVICE, 'models/model_info.json', time_between_frames=60, img_size=(800,800))
+    predictor = Hybrid_HMM_Predictor(DEVICE, 'models/model_info.json', time_between_frames=60)
     
     # Test live classifier
     print('Testing live classifier')
