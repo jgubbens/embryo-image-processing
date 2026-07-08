@@ -1,0 +1,44 @@
+[config_groups]
+Objective = "1-Plan Apo LmbdD0.80 20x"
+System = "Startup"
+
+[device_properties]
+
+[imaging]
+every_t = 1
+exposure = 600
+save = true
+binning = 2
+
+    [imaging.config_groups]
+    Laser-Intensity = "25%"
+    LightPath = "brightfield"
+
+[channels]
+group = "Channel"
+presets = ["brightfield"]
+
+    [channels.brightfield]
+    [channels.brightfield.config_groups]
+    Laser-Intensity = "50%"
+
+[stimulation]
+every_t = 1
+exposure = 500
+save = false
+
+    [stimulation.config_groups]
+    Channel = "DMD"
+    LightPath = "DMD_brightfield"
+    Laser-Intensity = "AllOff"
+    Sola = "30"
+
+[segmentation]
+method = "embryo_resizing"
+ideal_size = [200, 200]
+normhigh = 99
+
+[pattern]
+method = "classify_embryos"
+fraction_length = 0.2
+channel = "brightfield"

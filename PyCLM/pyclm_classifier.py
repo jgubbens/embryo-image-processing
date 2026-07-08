@@ -43,4 +43,3 @@ if __name__ == "__main__":
     pattern_methods = {"classify_embryos": ClassifyEmbryos}
 
     run_pyclm(BASE_PATH, pattern_methods=pattern_methods, position_mover=PFSPositionMover(), gui=True)
-    
