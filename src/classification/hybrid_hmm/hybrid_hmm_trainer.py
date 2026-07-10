@@ -42,24 +42,27 @@ class Hybrid_HMM:
             self.process_training_data()
         self.load_embryo_videos(processed=preprocess_images)
         self.cnn = cnn_classifier(self.device, window_size, self.STATES)
+        self.cnn.best_model_path = 'models/hybrid_hmm/hybrid_hmm_cnn.pt'
         if lstm_module:
             self.hidden_size = self.cnn.get_hidden_size()
             self.lstm = lstm_classifier(self.hidden_size, self.device, self.STATES, self.cnn)
+            self.lstm.best_model_path = 'models/hybrid_hmm/hybrid_hmm_lstm.pt'
     
     def train_hmm(self):
+        Path('models/hybrid_hmm').mkdir(parents=True, exist_ok=True)
         self.train_vids, self.val_vids = train_test_split(
             self.vids, test_size=0.2, random_state=1
         )
         print(f'Validation vids: {[embryo.vid_path for embryo in self.val_vids]}')
-        # self.augment_training_data()
-        # self.cnn.train_model(self.train_vids, self.val_vids, best_model_path=self.cnn.best_model_path, epochs=10, batch_size=16)
-        info = self.load_model_info(path='models/model_info.json')
-        self.cnn.load_from_path(info['cnn_model_path'])
+        self.augment_training_data()
+        self.cnn.train_model(self.train_vids, self.val_vids, best_model_path=self.cnn.best_model_path, epochs=10, batch_size=16)
+        # info = self.load_model_info()
+        # self.cnn.load_from_path(info['cnn_model_path'])
         self.cnn.model.eval()
-        self.cnn.evaluate(self.val_vids)
+        self.cnn.evaluate(self.val_vids, save_path='models/hybrid_hmm/hybrid_hmm_cnn_heatmap.png')
         if self.lstm_module:
             self.lstm.train_model(self.train_vids, self.val_vids, epochs=10, batch_size=16, lr=0.0001)
-            self.lstm.evaluate(self.val_vids)
+            self.lstm.evaluate(self.val_vids, save_path='models/hybrid_hmm/hybrid_hmm_lstm_heatmap.png')
         self._train_duration_model()
         self.save_model_info()
         self.evaluate()
@@ -117,7 +120,8 @@ class Hybrid_HMM:
             if d:
                 self.duration_model[state] = {'mean': np.mean(d), 'std': np.std(d) + 1e-6}
 
-    def save_model_info(self, path='models/model_info.json'):
+    def save_model_info(self, path='models/hybrid_hmm/hybrid_hmm_model_info.json'):
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
         info = {
             'window_size': self.window_size,
             'lstm_module': self.lstm_module,
@@ -134,7 +138,7 @@ class Hybrid_HMM:
             json.dump(info, f, indent=2)
         print(f'Model info saved to {path}')
 
-    def load_model_info(self, path='models/model_info.json'):
+    def load_model_info(self, path='models/hybrid_hmm/hybrid_hmm_model_info.json'):
         with open(path) as f:
             info = json.load(f)
         return info
@@ -236,8 +240,9 @@ class Hybrid_HMM:
             ax.grid(True, alpha=0.3)
             ax.legend()
             plt.tight_layout()
+            Path('models/hybrid_hmm').mkdir(parents=True, exist_ok=True)
             plt.savefig(
-                f"models/{Path(vid.vid_path).stem}_state_progression.png",
+                f"models/hybrid_hmm/{Path(vid.vid_path).stem}_state_progression.png",
                 dpi=150
             )
             plt.close()
@@ -276,12 +281,12 @@ class Hybrid_HMM:
 
         fig_progress.tight_layout()
         fig_progress.savefig(
-            'models/validation_state_progression_grid.png',
+            'models/hybrid_hmm/validation_state_progression_grid.png',
             dpi=150
         )
         plt.close(fig_progress)
 
-        print('State progression grid saved to models/validation_state_progression_grid.png')
+        print('State progression grid saved to models/hybrid_hmm/validation_state_progression_grid.png')
 
         all_preds = np.array(all_preds)
         all_labels = np.array(all_labels)
@@ -300,13 +305,13 @@ class Hybrid_HMM:
         ax.set_ylabel('True')
         ax.set_title(f'Confusion Matrix (accuracy={hmm_acc:.3f})')
         plt.tight_layout()
-        heatmap_path = 'models/hmm_heatmap.png'
+        heatmap_path = 'models/hybrid_hmm/hybrid_hmm_heatmap.png'
         plt.savefig(heatmap_path, dpi=150)
         plt.close()
         print(f'Heatmap saved to {heatmap_path}')
 
         if self.lstm_module:
-            self.lstm.evaluate(self.val_vids)
+            self.lstm.evaluate(self.val_vids, save_path='models/hybrid_hmm/hybrid_hmm_lstm_heatmap.png')
 
         print(f'{model_label}:\taccuracy: {model_acc:.3f}')
         print(f'HMM:\taccuracy: {hmm_acc:.3f}')

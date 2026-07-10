@@ -134,7 +134,7 @@ if __name__ == "__main__":
     )
     print(f'Using device: {DEVICE}')
 
-    predictor = Hybrid_HMM_Predictor(DEVICE, 'models/model_info.json', time_between_frames=60)
+    predictor = Hybrid_HMM_Predictor(DEVICE, 'models/hybrid_hmm/hybrid_hmm_model_info.json', time_between_frames=60)
     
     # Test live classifier
     print('Testing live classifier')
