@@ -16,13 +16,14 @@ class ClassifyEmbryos(OuterPatternMethod):
     name = "classify_embryos"
     log_path = Path(BASE_PATH, 'classification_logs.json')
     _log_lock = threading.Lock()
+    _classification_logs = {}
 
     def __init__(self, classify_channel="brightfield", **kwargs):
         super().__init__(channel=classify_channel, **kwargs)
 
         self._requirements_list = [(classify_channel, True, True)]
         self._classify_channel = classify_channel
-        self._frame_count = 0
+        self._timepoint = 0
 
         DEVICE = (
             'cuda' if torch.cuda.is_available()
@@ -36,12 +37,12 @@ class ClassifyEmbryos(OuterPatternMethod):
                 with open(self.log_path, 'w') as f:
                     json.dump(info, f, indent=2)
 
-        self.predictor = Hybrid_HMM_Predictor(DEVICE, f'C:\Users\Nikon\Desktop\Code\embryo-image-processing\models\model_info.json', time_between_frames=60)
+        self.predictor = Hybrid_HMM_Predictor(DEVICE, r'C:\Users\Nikon\Desktop\Code\embryo-image-processing\models\model_info.json', time_between_frames=60)
         self.states = self.predictor.STATES
 
     def generate(self, context: PatternContext) -> np.ndarray:
-        print(f"---- stimming: {self.experiment_name} ----")
-        self._frame_count += context._experiment.pattern.every_t
+        print(f"---- stimmulation: {self.experiment_name} ----")
+        self._timepoint += context._experiment.pattern.every_t
         self.predictor.predict_frame(context.raw(self._classify_channel))
         state = self.predictor.current_state
         experiment_name = context._experiment.experiment_name
@@ -49,14 +50,11 @@ class ClassifyEmbryos(OuterPatternMethod):
         state_label = self.states[state] if state is not None else "buffering"
         
         with self._log_lock:
-            with open(self.log_path, "r") as f:
-                classification_logs = json.load(f)
-            if experiment_name not in classification_logs:
-                classification_logs[experiment_name] = {}
-            classification_logs[experiment_name][str(self._frame_count)] = state_label
+            if experiment_name not in self._classification_logs:
+                self._classification_logs[experiment_name] = {}
+            self._classification_logs[experiment_name][str(self._timepoint)] = state_label
             with open(self.log_path, "w") as f:
-                json.dump(classification_logs, f)
-
+                json.dump(self._classification_logs, f, indent=2)
         if state is not None and state >= 9: # NC13
             # Stimulation with outer bar pattern
             print(f"Stimulation at state: {state_label}")
