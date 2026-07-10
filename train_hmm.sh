@@ -22,7 +22,7 @@
 #   curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 
-# Run from the repository root so the relative paths in hmm_classifier.py
+# Run from the repository root so the relative paths in hybrid_hmm_trainer.py
 # ('data/training_data', 'models/', 'models/model_info.json') resolve.
 cd "$SLURM_SUBMIT_DIR" || exit 1
 mkdir -p logs models
@@ -35,4 +35,26 @@ echo "Node:    $(hostname)"
 echo "GPU(s):  $CUDA_VISIBLE_DEVICES"
 nvidia-smi
 
-srun uv run python src/classification/hmm_design1/hmm_classifier.py
+# Unbuffered output so print() lines stream to the logs live (tail -f).
+export PYTHONUNBUFFERED=1
+srun uv run python -u src/classification/hybrid_hmm/hybrid_hmm_trainer.py
+
+# TO SYNC ADROIT WITH LOCAL - RUN FROM LOCCAL
+
+# rsync -avz --delete \
+#   --exclude '.venv' \
+#   --exclude '__pycache__' \
+#   --exclude '.DS_Store' \
+#   --exclude '.git' \
+#   ~/Documents/Github/embryo-image-processing/ \
+#   jg4187@adroit.princeton.edu:/scratch/network/jg4187/embryo-image-processing/
+
+# TO SUBMIT BATCH - RUN FROM ADROIT
+# sbatch train_hmm.sh
+
+# TO CHECK WHAT BATCHES ARE RUNNING
+# squeue -u jg4187
+
+# TO TAIL A RUNNING JOB
+# cd /scratch/network/jg4187/embryo-image-processing
+# tail -f logs/hmm_train_<jobid>.out
