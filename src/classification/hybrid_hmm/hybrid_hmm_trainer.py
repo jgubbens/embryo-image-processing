@@ -1,6 +1,8 @@
+import copy
 import json
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.ndimage import gaussian_filter
 from scipy.stats import norm
 import shutil
 from sklearn.metrics import confusion_matrix
@@ -25,7 +27,7 @@ class Hybrid_HMM:
 
     STATES = ['undetectable', 'NC9', 'NC9M', 'NC10', 'NC10M', 'NC11', 'NC11M', 'NC12', 'NC12M', 'NC13', 'NC13M', 'NC14+']
 
-    def __init__(self, data_dir, device, window_size, preprocess_images=False, lstm_module=False, img_size=None):
+    def __init__(self, data_dir, device, window_size, preprocess_images=False, lstm_module=False, img_size=None, augment_factor=5):
         self.data_dir = data_dir
         self.device = device
         self.n_states = len(self.STATES)
@@ -35,6 +37,7 @@ class Hybrid_HMM:
         if self.preprocess_images and img_size is None:
             raise ValueError('img_size must be provided when preprocess_images is True')
         self.img_size = img_size or (800, 800)
+        self.augment_factor = augment_factor
         if preprocess_images:
             self.process_training_data()
         self.load_embryo_videos(processed=preprocess_images)
@@ -48,9 +51,10 @@ class Hybrid_HMM:
             self.vids, test_size=0.2, random_state=1
         )
         print(f'Validation vids: {[embryo.vid_path for embryo in self.val_vids]}')
-        self.cnn.train_model(self.train_vids, self.val_vids, best_model_path=self.cnn.best_model_path, epochs=10, batch_size=16)
-        # info = self.load_model_info(path='models/model_info.json')
-        # self.cnn.load_from_path(info['cnn_model_path'])
+        # self.augment_training_data()
+        # self.cnn.train_model(self.train_vids, self.val_vids, best_model_path=self.cnn.best_model_path, epochs=10, batch_size=16)
+        info = self.load_model_info(path='models/model_info.json')
+        self.cnn.load_from_path(info['cnn_model_path'])
         self.cnn.model.eval()
         self.cnn.evaluate(self.val_vids)
         if self.lstm_module:
@@ -72,6 +76,7 @@ class Hybrid_HMM:
         train_paths = set(info['train_vid_paths'])
         self.val_vids = [vid for vid in self.vids if str(vid.vid_path) in val_paths]
         self.train_vids = [vid for vid in self.vids if str(vid.vid_path) in train_paths]
+        self.augment_factor = info.get('augment_factor', 0)
     
     def load_embryo_videos(self, processed):
         yaml_data = self._load_annotations()
@@ -119,10 +124,11 @@ class Hybrid_HMM:
             'preprocess_images': self.preprocess_images,
             'cnn_model_path': self.cnn.best_model_path,
             'lstm_model_path': self.lstm.best_model_path if self.lstm_module else None,
-            'train_vid_paths': [str(vid.vid_path) for vid in self.train_vids],
+            'train_vid_paths': list(set(str(vid.vid_path) for vid in self.train_vids)),
             'val_vid_paths': [str(vid.vid_path) for vid in self.val_vids],
             'duration_model': {str(state): stats for state, stats in self.duration_model.items()},
             'img_size': list(self.img_size),
+            'augment_factor': self.augment_factor,
         }
         with open(path, 'w') as f:
             json.dump(info, f, indent=2)
@@ -317,7 +323,38 @@ class Hybrid_HMM:
             vid_path = tifffile.imread(Path(self.data_dir, 'brightfield', f'{embryo}.tif'))
             output_path = processed_dir / f'{embryo}.tif'
             extract_embryo(vid_path, output_path=output_path)
-            
+    
+    def augment_training_data(self):
+        if self.augment_factor == 0:
+            return
+        print(f'Augmenting data with a factor of {self.augment_factor}')
+        originals = list(self.train_vids)
+        for vid in originals:
+            print(f'Augmenting video: {vid.vid_path}')
+            for _ in range(self.augment_factor):
+                augmented = copy.copy(vid)
+                frames = vid.vid.astype(np.float32) 
+
+                # Gaussian blur
+                sigma = np.random.uniform(0.5, 1.5)
+                frames = gaussian_filter(frames, sigma=(0, sigma, sigma))
+
+                # Gaussian noise
+                noise_std = np.random.uniform(0.001, 0.01) * 65535
+                frames = frames + np.random.normal(0, noise_std, frames.shape)
+
+                # Brightness
+                brightness = np.random.uniform(0.8, 1.2)
+                frames = frames * brightness
+
+                # Contrast
+                contrast = np.random.uniform(0.8, 1.2)
+                mean = frames.mean()
+                frames = mean + contrast * (frames - mean)
+
+                augmented.vid = np.clip(frames, 0, 65535).astype(np.uint16)
+                self.train_vids.append(augmented)
+                
 
 if __name__ == '__main__':
 
@@ -328,8 +365,7 @@ if __name__ == '__main__':
         else 'cpu'
     )
     print(f'Using device: {DEVICE}')
-    # classifier = NeuralHMM('data/hmm_tifs', DEVICE, window_size=1, preprocess_images=True)
-    classifier = Hybrid_HMM('data/training_data', DEVICE, window_size=5, preprocess_images=False, lstm_module=False, img_size=(800, 800))
+    classifier = Hybrid_HMM('data/training_data', DEVICE, window_size=5, preprocess_images=False, lstm_module=False, img_size=(800, 800), augment_factor=0)
 
     classifier.train_hmm()
     # classifier.load_pretrained_models()
