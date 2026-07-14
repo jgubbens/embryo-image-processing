@@ -32,12 +32,26 @@ class cnn_classifier:
         torch.use_deterministic_algorithms(True)
 
     def _build_model(self):
+        # ResNet-18
         self.model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
 
+        # EfficientNet-B2
+        # self.model = models.efficientnet_b2(weights=models.EfficientNet_B2_Weights.DEFAULT)
+
+        # EfficientNet-B3
+        # self.model = models.efficientnet_b3(weights=models.EfficientNet_B3_Weights.DEFAULT)
+
+        # ConvNeXt-Tiny
+        # self.model = models.convnext_tiny(weights=models.ConvNeXt_Tiny_Weights.DEFAULT)
+
+        # ResNet-34
+        # self.model = models.resnet34(weights=models.ResNet34_Weights.DEFAULT)
+
+
         # Freeze early layers
-        for name, param in self.model.named_parameters():
-            if any(name.startswith(p) for p in ['layer1', 'layer2', 'bn1']):
-                param.requires_grad = False
+        # for name, param in self.model.named_parameters():
+        #     if any(name.startswith(p) for p in ['layer1', 'layer2', 'bn1']):
+        #         param.requires_grad = False
             
         w = self.model.conv1.weight.mean(dim=1, keepdim=True)
         w = w.repeat(1, self.window_size, 1, 1)
