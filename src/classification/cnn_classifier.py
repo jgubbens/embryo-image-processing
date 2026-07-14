@@ -75,7 +75,7 @@ class cnn_classifier:
         print('Training CNN...')
         self.best_model_path = best_model_path
         dataset = ConcatDataset(train_vids)
-        labels = [dataset[i][1] for i in range(len(dataset))]
+        labels = [label for vid in train_vids for label in vid.get_labels()]
 
         class_counts = np.bincount(labels, minlength=len(self.STATES)).astype(np.float32)
         class_weights = torch.tensor(1.0 / (class_counts + 0.000001)).to(self.device)
@@ -156,7 +156,7 @@ class cnn_classifier:
         val_dataset = ConcatDataset(val_vids)
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
-        labels = [val_dataset[i][1] for i in range(len(val_dataset))]
+        labels = [label for vid in val_vids for label in vid.get_labels()]
         class_counts = np.bincount(labels, minlength=len(self.STATES)).astype(np.float32)
         class_weights = torch.tensor(1.0 / (class_counts + 0.000001)).to(self.device)
         criterion = nn.CrossEntropyLoss(weight=class_weights)

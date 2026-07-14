@@ -28,6 +28,9 @@ class embryo_video(Dataset):
             labels[frame] = self.STATES.index(state)
         return labels
 
+    def get_labels(self):
+        return [self.frame_labels[i + self.window_size] for i in range(len(self))]
+
     def __len__(self):
         return max(0, self.get_frame_count() - self.window_size + 1)
 
