@@ -1,13 +1,12 @@
 import json
 import numpy as np
-from scipy.stats import norm
 import tifffile
 import torch
 
 from classification.cnn_classifier import cnn_classifier
 from classification.lstm_classifier import lstm_classifier
 
-class Hybrid_HMM_Predictor:
+class Pure_HMM_Predictor:
 
     STATES = ['undetectable', 'NC9', 'NC9M', 'NC10', 'NC10M', 'NC11', 'NC11M', 'NC12', 'NC12M', 'NC13', 'NC13M', 'NC14+']
 
@@ -22,8 +21,8 @@ class Hybrid_HMM_Predictor:
             info = json.load(f)
         self.window_size = info['window_size']
         self.lstm_module = info['lstm_module']
-        self.duration_model = {int(k): v for k, v in info['duration_model'].items()}
-        self.live_img_size = tuple(info['img_size'])
+        self.transition_matrix = np.array(info['transition_matrix'])
+        self.live_img_size = tuple(info.get('img_size', [800, 800]))
         self.cnn = cnn_classifier(self.device, self.window_size, self.STATES)
         self.cnn.model.eval()
         self.cnn.load_from_path(info['cnn_model_path'])
@@ -34,9 +33,8 @@ class Hybrid_HMM_Predictor:
             self.lstm.load_from_path(info['lstm_model_path'])
 
     def initialize_live_prediction(self, time_between_frames):
-        self.current_state = None
         self.time_between_frames = time_between_frames
-        self.frames_in_state = 0
+        self.viterbi_log_dp = None
         self.frame_idx = 0
         self.predictions = []
         self.frame_buffer = []
@@ -54,25 +52,15 @@ class Hybrid_HMM_Predictor:
         )
         return tensor
     
-    def _get_duration_probs(self, current_state, seconds_in_state):
-        probs = np.zeros(self.n_states)
-
-        if current_state is None or current_state == 0:
-            return np.ones(self.n_states) / self.n_states
-
-        if current_state in self.duration_model:
-            d = self.duration_model[current_state]
-            p_stay = 1 - norm.cdf(seconds_in_state, d['mean'], d['std'])
-            probs[current_state] = p_stay
-            if current_state + 1 < self.n_states:
-                probs[current_state + 1] = 1 - p_stay
-            else:
-                probs[current_state] = 1.0
+    def _viterbi_step(self, model_probs):
+        log_emit = np.log(np.array(model_probs) + 1e-10)
+        log_trans = np.log(self.transition_matrix + 1e-10)
+        if self.viterbi_log_dp is None:
+            self.viterbi_log_dp = log_emit - np.log(self.n_states)
         else:
-            probs[current_state] = 1.0
-
-        probs /= probs.sum() + 1e-9
-        return probs
+            candidates = self.viterbi_log_dp[:, None] + log_trans
+            self.viterbi_log_dp = np.max(candidates, axis=0) + log_emit
+        return int(np.argmax(self.viterbi_log_dp))
 
     def predict_frame(self, frame):
         frame_np = frame.numpy() if isinstance(frame, torch.Tensor) else frame
@@ -96,20 +84,11 @@ class Hybrid_HMM_Predictor:
                 model_probs = torch.softmax(logits, dim=-1).cpu().numpy().squeeze()
         model_pred = np.argmax(model_probs)
 
-        seconds_in_state = self.frames_in_state * self.time_between_frames
-        duration_probs = self._get_duration_probs(self.current_state, seconds_in_state)
-
-        combined = model_probs * duration_probs
-        combined /= combined.sum()
-        prediction = np.argmax(combined)
-        prediction = max(prediction, self.current_state or 0)
+        prediction = self._viterbi_step(model_probs)
 
         model_label = 'LSTM' if self.lstm_module else 'CNN'
         print(f'Frame {self.frame_idx}:\tHMM Prediction: {self.STATES[prediction]}\t{model_label} Prediction: {self.STATES[model_pred]}')
 
-        # Update current state
-        self.frames_in_state = self.frames_in_state + 1 if prediction == self.current_state else 1
-        self.current_state = prediction
         self.predictions.append(prediction)
         self.frame_idx += 1
 
@@ -122,7 +101,7 @@ if __name__ == "__main__":
     )
     print(f'Using device: {DEVICE}')
 
-    predictor = Hybrid_HMM_Predictor(DEVICE, 'models/hybrid_hmm/hybrid_hmm_model_info.json', time_between_frames=60)
+    predictor = Pure_HMM_Predictor(DEVICE, 'models/pure_hmm/pure_hmm_model_info.json', time_between_frames=60)
     
     # Test live classifier
     print('Testing live classifier')

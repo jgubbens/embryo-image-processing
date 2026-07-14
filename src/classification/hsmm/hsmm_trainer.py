@@ -21,17 +21,18 @@ from classification.embryo_video import embryo_video
 from processing.extract_embryo import extract_embryo
 
 
-class HMM_Trainer:
+class HSMM_Trainer:
 
     STATES = ['undetectable', 'NC9', 'NC9M', 'NC10', 'NC10M', 'NC11', 'NC11M', 'NC12', 'NC12M', 'NC13', 'NC13M', 'NC14+']
 
-    def __init__(self, data_dir, device, window_size, preprocess_images=False, lstm_module=False, img_size=None):
+    def __init__(self, data_dir, device, window_size, preprocess_images=False, lstm_module=False, img_size=None, max_duration=300):
         self.data_dir = data_dir
         self.device = device
         self.n_states = len(self.STATES)
         self.window_size = window_size
         self.lstm_module = lstm_module
         self.preprocess_images = preprocess_images
+        self.max_duration = max_duration
         if self.preprocess_images and img_size is None:
             raise ValueError('img_size must be provided when preprocess_images is True')
         self.img_size = img_size or (800, 800)
@@ -39,14 +40,14 @@ class HMM_Trainer:
             self.process_training_data()
         self.load_embryo_videos(processed=preprocess_images)
         self.cnn = cnn_classifier(self.device, window_size, self.STATES)
-        self.cnn.best_model_path = 'models/pure_hmm/pure_hmm_cnn.pt'
+        self.cnn.best_model_path = 'models/hsmm/hsmm_cnn.pt'
         if lstm_module:
             self.hidden_size = self.cnn.get_hidden_size()
             self.lstm = lstm_classifier(self.hidden_size, self.device, self.STATES, self.cnn)
-            self.lstm.best_model_path = 'models/pure_hmm/pure_hmm_lstm.pt'
+            self.lstm.best_model_path = 'models/hsmm/hsmm_lstm.pt'
     
     def train_hmm(self):
-        Path('models/pure_hmm').mkdir(parents=True, exist_ok=True)
+        Path('models/hsmm').mkdir(parents=True, exist_ok=True)
         self.train_vids, self.val_vids = train_test_split(
             self.vids, test_size=0.2, random_state=1
         )
@@ -55,17 +56,23 @@ class HMM_Trainer:
         info = self.load_model_info()
         self.cnn.load_from_path(info['cnn_model_path'])
         self.cnn.model.eval()
-        self.cnn.evaluate(self.val_vids, save_path='models/pure_hmm/pure_hmm_cnn_heatmap.png')
+        self.cnn.evaluate(self.val_vids)
         if self.lstm_module:
             self.lstm.train_model(self.train_vids, self.val_vids, epochs=10, batch_size=16, lr=0.0001)
-            self.lstm.evaluate(self.val_vids, save_path='models/pure_hmm/pure_hmm_lstm_heatmap.png')
+            self.lstm.evaluate(self.val_vids)
         self.create_transition_matrix()
+        print('Fitting duration distributions:')
+        self.create_duration_distributions()
         self.save_model_info()
         self.evaluate()
 
     def load_pretrained_models(self):
         info = self.load_model_info()
         self.transition_matrix = np.array(info['transition_matrix'])
+        self.duration_params = {
+            int(k): tuple(v) if v is not None else None
+            for k, v in info['duration_params'].items()
+        }
         self.cnn.load_from_path(info['cnn_model_path'])
         self.cnn.model.eval()
         if self.lstm_module:
@@ -99,56 +106,133 @@ class HMM_Trainer:
             labels = list(vid.frame_labels.values())
             for t in range(1, len(labels)):
                 counts[labels[t - 1], labels[t]] += 1
+        # Zero diagonal — duration handles self-repetition in HSMM
+        np.fill_diagonal(counts, 0)
         row_sums = counts.sum(axis=1, keepdims=True)
         row_sums[row_sums == 0] = 1
         self.transition_matrix = counts / row_sums
+        # Undetectable has no duration constraint and can only enter NC9
         self.transition_matrix[0] = 0.0
-        self.transition_matrix[0][0] = 0.5
-        self.transition_matrix[0][1] = 0.5
+        self.transition_matrix[0][1] = 1.0
         return self.transition_matrix
 
-    def viterbi(self, obs_probs):
+    def create_duration_distributions(self):
+        """Fit Gaussian duration distributions for states 1-11; skip state 0 (undetectable)."""
+        dwell_times = {s: [] for s in range(self.n_states)}
+        for vid in self.train_vids:
+            labels = list(vid.frame_labels.values())
+            i = 0
+            while i < len(labels):
+                s = labels[i]
+                j = i
+                while j < len(labels) and labels[j] == s:
+                    j += 1
+                dwell_times[s].append(j - i)
+                i = j
+
+        self.duration_params = {}
+        for s in range(self.n_states):
+            if s == 0:
+                self.duration_params[s] = None  # flat prior — no duration constraint
+                continue
+            dwells = dwell_times[s]
+            if len(dwells) >= 2:
+                mu = float(np.mean(dwells))
+                sigma = max(float(np.std(dwells)), 1.0)
+                self.duration_params[s] = (mu, sigma)
+                print(f'  {self.STATES[s]}: n={len(dwells)}, mean={mu:.1f}, std={sigma:.1f}')
+            else:
+                self.duration_params[s] = None
+                if dwells:
+                    print(f'  {self.STATES[s]}: only {len(dwells)} sample(s), skipping duration fit')
+
+    def viterbi_hsmm(self, obs_probs):
         T, n = obs_probs.shape
-        log_trans = np.log(self.transition_matrix + 1e-10)
-        log_emit = np.log(obs_probs + 1e-10)
+        max_d = min(self.max_duration, T)
+
+        log_emit = np.log(obs_probs + 1e-10)               # (T, n)
+        log_trans = np.log(self.transition_matrix + 1e-10) # (n, n)
+        cum_emit = np.cumsum(log_emit, axis=0)              # (T, n)
+
+        # Precompute duration log-probs: log_dur[j, d] for d in 1..max_d
+        log_dur = np.zeros((n, max_d + 1))  # index 0 unused
+        for j in range(n):
+            params = self.duration_params.get(j)
+            if params is not None:
+                mu, sigma = params
+                log_dur[j, 1:] = norm.logpdf(np.arange(1, max_d + 1), mu, sigma)
+            # else: remains 0.0 — flat prior (no duration constraint)
 
         dp = np.full((T, n), -np.inf)
-        backptr = np.zeros((T, n), dtype=int)
+        bp_state = np.full((T, n), -1, dtype=int)  # -1 = start of sequence
+        bp_time = np.full((T, n), -1, dtype=int)   # -1 = start of sequence
 
-        # Uniform start distribution
-        dp[0] = log_emit[0] - np.log(n)
+        # Init: all segments starting at t=0
+        for d in range(1, max_d + 1):
+            t_end = d - 1
+            if t_end >= T:
+                break
+            seg = cum_emit[t_end] + log_dur[:, d]  # (n,)
+            scores = -np.log(n) + seg
+            update = scores > dp[t_end]
+            dp[t_end, update] = scores[update]
+            # bp stays -1/-1: sentinel for "segment starts at t=0"
 
+        # Fill DP: t is the end of a segment, d is its duration
         for t in range(1, T):
-            candidates = dp[t - 1, :, None] + log_trans
-            backptr[t] = np.argmax(candidates, axis=0)
-            dp[t] = candidates[backptr[t], np.arange(n)] + log_emit[t]
+            for d in range(1, min(max_d, t) + 1):
+                t_prev = t - d  # end of the preceding segment
+                # Sum of log-emissions over [t_prev+1 .. t] plus duration score
+                seg = cum_emit[t] - cum_emit[t_prev] + log_dur[:, d]  # (n,)
+                # candidates[i, j] = dp[t_prev, i] + log_trans[i, j] + seg[j]
+                candidates = dp[t_prev, :, None] + log_trans + seg[None, :]  # (n, n)
+                np.fill_diagonal(candidates, -np.inf)  # no consecutive same-state segments
+                best_i = np.argmax(candidates, axis=0)        # (n,)
+                best_score = candidates[best_i, np.arange(n)] # (n,)
+                update = best_score > dp[t]
+                dp[t, update] = best_score[update]
+                bp_state[t, update] = best_i[update]
+                bp_time[t, update] = t_prev
 
-        best_path = np.zeros(T, dtype=int)
-        best_path[-1] = np.argmax(dp[-1])
-        for t in range(T - 2, -1, -1):
-            best_path[t] = backptr[t + 1, best_path[t + 1]]
+        # Traceback
+        frame_labels = np.zeros(T, dtype=int)
+        s = int(np.argmax(dp[T - 1]))
+        t = T - 1
+        while t >= 0:
+            prev_t = bp_time[t, s]
+            prev_s = bp_state[t, s]
+            t_start = 0 if prev_t < 0 else prev_t + 1
+            frame_labels[t_start:t + 1] = s
+            if prev_t < 0:
+                break
+            t = prev_t
+            s = prev_s
 
-        return float(dp[-1, best_path[-1]]), best_path.tolist()
+        return float(dp[T - 1, int(np.argmax(dp[T - 1]))]), frame_labels.tolist()
 
-    def save_model_info(self, path='models/pure_hmm/pure_hmm_model_info.json'):
+    def save_model_info(self, path='models/hsmm/hsmm_model_info.json'):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         info = {
             'window_size': self.window_size,
             'lstm_module': self.lstm_module,
             'preprocess_images': self.preprocess_images,
+            'max_duration': self.max_duration,
             'cnn_model_path': self.cnn.best_model_path,
             'lstm_model_path': self.lstm.best_model_path if self.lstm_module else None,
-            'train_vid_paths': [str(vid.vid_path) for vid in self.train_vids],
+            'train_vid_paths': list(set(str(vid.vid_path) for vid in self.train_vids)),
             'val_vid_paths': [str(vid.vid_path) for vid in self.val_vids],
             'transition_matrix': self.transition_matrix.tolist(),
+            'duration_params': {
+                str(s): list(params) if params is not None else None
+                for s, params in self.duration_params.items()
+            },
+            'img_size': list(self.img_size),
         }
-        if self.preprocess_images:
-            info['img_size'] = list(self.img_size)
         with open(path, 'w') as f:
             json.dump(info, f, indent=2)
         print(f'Model info saved to {path}')
 
-    def load_model_info(self, path='models/pure_hmm/pure_hmm_model_info.json'):
+    def load_model_info(self, path='models/hsmm/hsmm_model_info.json'):
         with open(path) as f:
             info = json.load(f)
         return info
@@ -185,11 +269,12 @@ class HMM_Trainer:
         # Get preds for video up to every frame
         preds = []
         for t in range(len(vid)):
-            _, path = self.viterbi(obs_probs[:t+1])
+            _, path = self.viterbi_hsmm(obs_probs[:t+1])
             preds.append(path[-1])
         preds = np.array(preds)
 
         labels = np.array(labels)
+        preds = np.array(preds)
         model_preds = np.array(model_preds)
 
         if ax is not None:
@@ -220,9 +305,9 @@ class HMM_Trainer:
             ax.grid(True, alpha=0.3)
             ax.legend()
             plt.tight_layout()
-            Path('models/pure_hmm').mkdir(parents=True, exist_ok=True)
+            Path('models/hsmm').mkdir(parents=True, exist_ok=True)
             plt.savefig(
-                f"models/pure_hmm/{Path(vid.vid_path).stem}_state_progression.png",
+                f"models/hsmm/{Path(vid.vid_path).stem}_state_progression.png",
                 dpi=150
             )
             plt.close()
@@ -261,12 +346,12 @@ class HMM_Trainer:
 
         fig_progress.tight_layout()
         fig_progress.savefig(
-            'models/pure_hmm/validation_state_progression_grid.png',
+            'models/hsmm/validation_state_progression_grid.png',
             dpi=150
         )
         plt.close(fig_progress)
 
-        print('State progression grid saved to models/pure_hmm/validation_state_progression_grid.png')
+        print('State progression grid saved to models/hsmm/validation_state_progression_grid.png')
 
         all_preds = np.array(all_preds)
         all_labels = np.array(all_labels)
@@ -285,16 +370,16 @@ class HMM_Trainer:
         ax.set_ylabel('True')
         ax.set_title(f'Confusion Matrix (accuracy={hmm_acc:.3f})')
         plt.tight_layout()
-        heatmap_path = 'models/pure_hmm/pure_hmm_heatmap.png'
+        heatmap_path = 'models/hsmm/hsmm_heatmap.png'
         plt.savefig(heatmap_path, dpi=150)
         plt.close()
         print(f'Heatmap saved to {heatmap_path}')
 
         if self.lstm_module:
-            self.lstm.evaluate(self.val_vids, save_path='models/pure_hmm/pure_hmm_lstm_heatmap.png')
+            self.lstm.evaluate(self.val_vids)
 
         print(f'{model_label}:\taccuracy: {model_acc:.3f}')
-        print(f'HMM:\taccuracy: {hmm_acc:.3f}')
+        print(f'HSMM:\taccuracy: {hmm_acc:.3f}')
     
     def process_training_data(self):
         processed_dir = Path(self.data_dir, 'processed_tifs')
@@ -312,7 +397,7 @@ class HMM_Trainer:
 
 if __name__ == '__main__':
 
-    print('Running hidden markov model classification')
+    print('Running hidden semi-markov model classification')
     DEVICE = (
         'cuda' if torch.cuda.is_available()
         else 'mps' if torch.backends.mps.is_available()
@@ -320,7 +405,7 @@ if __name__ == '__main__':
     )
     print(f'Using device: {DEVICE}')
     # classifier = NeuralHMM('data/hmm_tifs', DEVICE, window_size=1, preprocess_images=True)
-    classifier = HMM_Trainer('data/training_data', DEVICE, window_size=5, preprocess_images=False, lstm_module=False, img_size=(800, 800))
+    classifier = HSMM_Trainer('data/training_data', DEVICE, window_size=5, preprocess_images=False, lstm_module=False, img_size=(800, 800))
 
     classifier.train_hmm()
     # classifier.load_pretrained_models()
