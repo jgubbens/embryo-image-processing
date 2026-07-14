@@ -397,6 +397,8 @@ class HSMM_Trainer:
 
 if __name__ == '__main__':
 
+    DATA_PATH = r'data/training_data'
+
     print('Running hidden semi-markov model classification')
     DEVICE = (
         'cuda' if torch.cuda.is_available()
@@ -404,8 +406,7 @@ if __name__ == '__main__':
         else 'cpu'
     )
     print(f'Using device: {DEVICE}')
-    # classifier = NeuralHMM('data/hmm_tifs', DEVICE, window_size=1, preprocess_images=True)
-    classifier = HSMM_Trainer('data/training_data', DEVICE, window_size=5, preprocess_images=False, lstm_module=False, img_size=(800, 800))
+    classifier = HSMM_Trainer(DATA_PATH, DEVICE, window_size=5, preprocess_images=False, lstm_module=False, img_size=(800, 800))
 
     classifier.train_hmm()
     # classifier.load_pretrained_models()
