@@ -27,7 +27,7 @@ class Hybrid_HMM:
 
     STATES = ['undetectable', 'NC9', 'NC9M', 'NC10', 'NC10M', 'NC11', 'NC11M', 'NC12', 'NC12M', 'NC13', 'NC13M', 'NC14+']
 
-    def __init__(self, data_dir, device, window_size, preprocess_images=False, lstm_module=False, img_size=None, augment_factor=5):
+    def __init__(self, data_dir, device, window_size, preprocess_images=False, lstm_module=False, img_size=None, augment_factor=5, model_path='models/hybrid_hmm'):
         self.data_dir = data_dir
         self.device = device
         self.n_states = len(self.STATES)
@@ -49,7 +49,7 @@ class Hybrid_HMM:
             self.lstm.best_model_path = 'models/hybrid_hmm/hybrid_hmm_lstm.pt'
     
     def train_hmm(self):
-        Path('models/hybrid_hmm').mkdir(parents=True, exist_ok=True)
+        Path(self.model_path).mkdir(parents=True, exist_ok=True)
         self.train_vids, self.val_vids = train_test_split(
             self.vids, test_size=0.2, random_state=1
         )
