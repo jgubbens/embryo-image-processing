@@ -27,9 +27,8 @@ class cnn_classifier:
         np.random.seed(s)
         torch.manual_seed(s)
         torch.cuda.manual_seed_all(s)
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-        torch.use_deterministic_algorithms(True)
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cudnn.benchmark = True
 
     def _build_model(self):
         # ResNet-18
@@ -86,10 +85,12 @@ class cnn_classifier:
 
         g = torch.Generator()
         g.manual_seed(42)
-        loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, generator=g)
+        loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, generator=g,
+                            num_workers=4, pin_memory=True, persistent_workers=True)
 
         val_dataset = ConcatDataset(val_vids)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,
+                                num_workers=4, pin_memory=True, persistent_workers=True)
         best_val_loss = float('inf')
 
         for epoch in range(1, epochs + 1):
