@@ -9,7 +9,7 @@ class embryo_video(Dataset):
         self.yaml_data = yaml_data
         self.vid_path = vid
         vid_np = tifffile.imread(vid)
-        self.vid = torch.tensor(vid_np)
+        self.vid = torch.from_numpy(vid_np.copy())
         self.STATES = states
         self.window_size = window_size
         self.img_size = img_size
