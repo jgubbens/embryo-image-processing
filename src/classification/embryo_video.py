@@ -8,9 +8,21 @@ class embryo_video(Dataset):
     def __init__(self, yaml_data, vid, states, window_size=5, img_size=(224, 224)):
         self.yaml_data = yaml_data
         self.vid_path = vid
+
+        # Preprocess video
         vid_np = tifffile.imread(vid)
-        self.vid = torch.from_numpy(vid_np)
+        vid_tensor = torch.from_numpy(vid_np).float()
+        # Normalize per-frame
+        vmin = vid_tensor.amin(dim=(-2,-1), keepdim=True)
+        vmax = vid_tensor.amax(dim=(-2,-1), keepdim=True)
+        vid_tensor = (vid_tensor - vmin) / (vmax - vmin + 1e-6)
+        # Resize once
+        vid_tensor = torch.nn.functional.interpolate(
+            vid_tensor.unsqueeze(1), size=img_size, mode='bilinear', align_corners=False
+        ).squeeze(1).half()
+        self.vid = vid_tensor
         self.vid.share_memory_()
+        
         self.STATES = states
         self.window_size = window_size
         self.img_size = img_size
@@ -39,7 +51,7 @@ class embryo_video(Dataset):
     def __getitem__(self, idx):
         frame = idx + self.window_size # last (1-indexed) frame of the window
         window = self.get_frame_window(frame)
-        window = self._preprocess(window)
+        window = window.float()
         return window, self.frame_labels[frame]
 
     def get_frame_count(self):
@@ -61,14 +73,3 @@ class embryo_video(Dataset):
                 frames.append(self.vid[i - 1])
         return torch.stack(frames, axis=0)
     
-    def _preprocess(self, window):
-        window = window.float()
-        for i in range(window.shape[0]):
-            vmin, vmax = window[i].min(), window[i].max()
-            if vmax > vmin:
-                window[i] = (window[i] - vmin) / (vmax - vmin)
-        tensor = window.unsqueeze(0)
-        tensor = torch.nn.functional.interpolate(
-            tensor, size=self.img_size, mode='bilinear', align_corners=False
-        ).squeeze(0)
-        return tensor
