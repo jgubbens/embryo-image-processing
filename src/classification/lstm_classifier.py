@@ -40,7 +40,7 @@ class lstm_classifier:
         with torch.no_grad():
             for x, y in loader:
                 x = x.to(self.device)
-                x = torch.nn.functional.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
+                x = torch.nn.functional.interpolate(x, size=cnn_classifier.INPUT_SIZE, mode='bilinear', align_corners=False)
                 feat = cnn.model(x)
                 features.append(feat)
                 labels.append(y)
