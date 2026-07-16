@@ -187,7 +187,6 @@ class Hybrid_HMM:
             else:
                 with torch.no_grad():
                     frame = frame.unsqueeze(0).to(self.device)
-                    frame = torch.nn.functional.interpolate(frame, size=(224, 224), mode='bilinear', align_corners=False)
                     logits = self.cnn.model(frame)
                     model_probs = torch.softmax(logits, dim=-1).cpu().numpy().squeeze()
             model_pred = np.argmax(model_probs)
