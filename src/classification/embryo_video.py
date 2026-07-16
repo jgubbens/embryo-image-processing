@@ -67,9 +67,8 @@ class embryo_video(Dataset):
             vmin, vmax = window[i].min(), window[i].max()
             if vmax > vmin:
                 window[i] = (window[i] - vmin) / (vmax - vmin)
-        # tensor = window.unsqueeze(0)
-        # tensor = torch.nn.functional.interpolate(
-        #     tensor, size=self.img_size, mode='bilinear', align_corners=False
-        # ).squeeze(0)
-        # return tensor
-        return window
+        tensor = window.unsqueeze(0)
+        tensor = torch.nn.functional.interpolate(
+            tensor, size=self.img_size, mode='bilinear', align_corners=False
+        ).squeeze(0)
+        return tensor

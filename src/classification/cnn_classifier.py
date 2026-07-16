@@ -113,7 +113,6 @@ class cnn_classifier:
             train_loss, train_correct = 0.0, 0
             for x, y in tqdm(loader, desc=f"Epoch {epoch}/{epochs}"):
                 x, y = x.to(self.device), y.to(self.device)
-                x = torch.nn.functional.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
                 optimizer.zero_grad()
                 logits = self.model(x)
                 loss = criterion(logits, y)
@@ -132,7 +131,6 @@ class cnn_classifier:
             with torch.no_grad():
                 for x, y in val_loader:
                     x, y = x.to(self.device), y.to(self.device)
-                    x = torch.nn.functional.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
                     logits = self.model(x)
                     loss = criterion(logits, y)
                     val_loss += loss.item() * len(x)
@@ -182,7 +180,6 @@ class cnn_classifier:
         with torch.no_grad():
             for x, y in val_loader:
                 x, y = x.to(self.device), y.to(self.device)
-                x = torch.nn.functional.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
                 logits = self.model(x)
                 val_loss += criterion(logits, y).item() * len(x)
                 preds = logits.argmax(dim=1)
