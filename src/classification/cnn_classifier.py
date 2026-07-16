@@ -161,6 +161,7 @@ class cnn_classifier:
         if x.dim() == 3:
             x = x.unsqueeze(0)
         x = x.to(self.device)
+        x = torch.nn.functional.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
         logits = self.model(x)
         probs = torch.softmax(logits, dim=1)
         preds = probs.argmax(dim=1)
