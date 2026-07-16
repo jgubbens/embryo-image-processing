@@ -312,7 +312,7 @@ class HMM_Trainer:
 
 if __name__ == '__main__':
 
-    DATA_PATH = r'data/training_data'
+    DATA_PATH = r'E:\Justin\training_data'
 
     print('Running hidden markov model classification')
     DEVICE = (

@@ -38,6 +38,7 @@ class Hybrid_HMM:
             raise ValueError('img_size must be provided when preprocess_images is True')
         self.img_size = img_size or (800, 800)
         self.augment_factor = augment_factor
+        self.model_path = model_path
         if preprocess_images:
             self.process_training_data()
         self.load_embryo_videos(processed=preprocess_images)
@@ -55,7 +56,7 @@ class Hybrid_HMM:
         )
         print(f'Validation vids: {[embryo.vid_path for embryo in self.val_vids]}')
         self.augment_training_data()
-        self.cnn.train_model(self.train_vids, self.val_vids, best_model_path=self.cnn.best_model_path, epochs=10, batch_size=16)
+        self.cnn.train_model(self.train_vids, self.val_vids, best_model_path=self.cnn.best_model_path, epochs=30, batch_size=16)
         # info = self.load_model_info()
         # self.cnn.load_from_path(info['cnn_model_path'])
         self.cnn.model.eval()
@@ -363,7 +364,7 @@ class Hybrid_HMM:
 
 if __name__ == '__main__':
 
-    DATA_PATH = r'data/training_data'
+    DATA_PATH = r'E:\Justin\training_data'
 
     print('Running hidden markov model classification')
     DEVICE = (
@@ -372,7 +373,7 @@ if __name__ == '__main__':
         else 'cpu'
     )
     print(f'Using device: {DEVICE}')
-    classifier = Hybrid_HMM(DATA_PATH, DEVICE, window_size=5, preprocess_images=False, lstm_module=False, img_size=(800, 800), augment_factor=0)
+    classifier = Hybrid_HMM(DATA_PATH, DEVICE, window_size=10, preprocess_images=False, lstm_module=False, img_size=(800, 800), augment_factor=0)
 
     classifier.train_hmm()
     # classifier.load_pretrained_models()

@@ -8,7 +8,9 @@ class embryo_video(Dataset):
     def __init__(self, yaml_data, vid, states, window_size=5, img_size=(224, 224)):
         self.yaml_data = yaml_data
         self.vid_path = vid
-        self.vid = tifffile.imread(vid)
+        vid_np = tifffile.imread(vid)
+        self.vid = torch.from_numpy(vid_np)
+        self.vid.share_memory_()
         self.STATES = states
         self.window_size = window_size
         self.img_size = img_size
@@ -54,19 +56,20 @@ class embryo_video(Dataset):
         frames = []
         for i in range(frame - self.window_size + 1, frame + 1):
             if i < 1:
-                frames.append(np.zeros_like(self.vid[0]))
+                frames.append(torch.zeros_like(self.vid[0]))
             else:
                 frames.append(self.vid[i - 1])
-        return np.stack(frames, axis=0)
+        return torch.stack(frames, axis=0)
     
     def _preprocess(self, window):
-        window = window.astype(np.float32)
+        window = window.float()
         for i in range(window.shape[0]):
             vmin, vmax = window[i].min(), window[i].max()
             if vmax > vmin:
                 window[i] = (window[i] - vmin) / (vmax - vmin)
-        tensor = torch.from_numpy(window).unsqueeze(0)
-        tensor = torch.nn.functional.interpolate(
-            tensor, size=self.img_size, mode='bilinear', align_corners=False
-        ).squeeze(0)
-        return tensor
+        # tensor = window.unsqueeze(0)
+        # tensor = torch.nn.functional.interpolate(
+        #     tensor, size=self.img_size, mode='bilinear', align_corners=False
+        # ).squeeze(0)
+        # return tensor
+        return window

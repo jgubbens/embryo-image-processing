@@ -32,13 +32,13 @@ class cnn_classifier:
 
     def _build_model(self):
         # ResNet-18
-        self.model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+        # self.model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
 
         # EfficientNet-B2
         # self.model = models.efficientnet_b2(weights=models.EfficientNet_B2_Weights.DEFAULT)
 
         # EfficientNet-B3
-        # self.model = models.efficientnet_b3(weights=models.EfficientNet_B3_Weights.DEFAULT)
+        self.model = models.efficientnet_b3(weights=models.EfficientNet_B3_Weights.DEFAULT)
 
         # ConvNeXt-Tiny
         # self.model = models.convnext_tiny(weights=models.ConvNeXt_Tiny_Weights.DEFAULT)
@@ -52,13 +52,24 @@ class cnn_classifier:
         #     if any(name.startswith(p) for p in ['layer1', 'layer2', 'bn1']):
         #         param.requires_grad = False
             
-        w = self.model.conv1.weight.mean(dim=1, keepdim=True)
-        w = w.repeat(1, self.window_size, 1, 1)
-        self.model.conv1 = nn.Conv2d(self.window_size, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        self.model.conv1.weight = nn.Parameter(w)
+        # # ResNet version
+        # w = self.model.conv1.weight.mean(dim=1, keepdim=True)
+        # w = w.repeat(1, self.window_size, 1, 1)
+        # self.model.conv1 = nn.Conv2d(self.window_size, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        # self.model.conv1.weight = nn.Parameter(w)
+        # self.hidden_size = self.model.fc.in_features
+        # self.model.fc = nn.Linear(self.hidden_size, len(self.STATES))
 
-        self.hidden_size = self.model.fc.in_features
-        self.model.fc = nn.Linear(self.hidden_size, len(self.STATES))
+        # EfficientNet version
+        first_conv = self.model.features[0][0]
+        out_ch = first_conv.out_channels
+        w = first_conv.weight.mean(dim=1, keepdim=True).repeat(1, self.window_size, 1, 1)
+        self.model.features[0][0] = nn.Conv2d(self.window_size, out_ch, kernel_size=3, stride=2, padding=1, bias=False)
+        self.model.features[0][0].weight = nn.Parameter(w)
+        self.hidden_size = self.model.classifier[1].in_features
+        self.model.classifier[1] = nn.Linear(self.hidden_size, len(self.STATES))
+
+        
         self.model.to(self.device)
         
         return self.model
@@ -71,8 +82,9 @@ class cnn_classifier:
     def get_hidden_size(self):
         return self.hidden_size
     
-    def train_model(self, train_vids, val_vids, best_model_path, epochs=30, batch_size=16, lr=0.0001):
+    def train_model(self, train_vids, val_vids, best_model_path, epochs=30, batch_size=16, lr=0.0001, num_workers=4):
         print('Training CNN...')
+        print(f"Train vid count: {len(train_vids)}, Val vid count: {len(val_vids)}")
         self.best_model_path = best_model_path
         dataset = ConcatDataset(train_vids)
         labels = [label for vid in train_vids for label in vid.get_labels()]
@@ -86,11 +98,11 @@ class cnn_classifier:
         g = torch.Generator()
         g.manual_seed(42)
         loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, generator=g,
-                            num_workers=4, pin_memory=True, persistent_workers=True)
+                            num_workers=num_workers, pin_memory=True, persistent_workers=True)
 
         val_dataset = ConcatDataset(val_vids)
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,
-                                num_workers=4, pin_memory=True, persistent_workers=True)
+                                num_workers=num_workers, pin_memory=True, persistent_workers=True)
         best_val_loss = float('inf')
 
         for epoch in range(1, epochs + 1):
@@ -101,6 +113,7 @@ class cnn_classifier:
             train_loss, train_correct = 0.0, 0
             for x, y in tqdm(loader, desc=f"Epoch {epoch}/{epochs}"):
                 x, y = x.to(self.device), y.to(self.device)
+                x = torch.nn.functional.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
                 optimizer.zero_grad()
                 logits = self.model(x)
                 loss = criterion(logits, y)
@@ -119,6 +132,7 @@ class cnn_classifier:
             with torch.no_grad():
                 for x, y in val_loader:
                     x, y = x.to(self.device), y.to(self.device)
+                    x = torch.nn.functional.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
                     logits = self.model(x)
                     loss = criterion(logits, y)
                     val_loss += loss.item() * len(x)
@@ -168,6 +182,7 @@ class cnn_classifier:
         with torch.no_grad():
             for x, y in val_loader:
                 x, y = x.to(self.device), y.to(self.device)
+                x = torch.nn.functional.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
                 logits = self.model(x)
                 val_loss += criterion(logits, y).item() * len(x)
                 preds = logits.argmax(dim=1)
