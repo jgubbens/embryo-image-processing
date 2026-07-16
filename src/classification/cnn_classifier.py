@@ -96,21 +96,14 @@ class cnn_classifier:
         optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=0.0001)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
-        def collate_fn(batch):
-            xs = torch.stack([b[0] for b in batch])
-            ys = torch.tensor([b[1] for b in batch], dtype=torch.long)
-            return xs, ys
-
         g = torch.Generator()
         g.manual_seed(42)
         loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, generator=g,
-                            num_workers=num_workers, pin_memory=True, persistent_workers=True,
-                            collate_fn=collate_fn)
+                            num_workers=num_workers, pin_memory=True, persistent_workers=True)
 
         val_dataset = ConcatDataset(val_vids)
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,
-                                num_workers=num_workers, pin_memory=True, persistent_workers=True,
-                                collate_fn=collate_fn)
+                                num_workers=num_workers, pin_memory=True, persistent_workers=True)
         best_val_loss = float('inf')
 
         for epoch in range(1, epochs + 1):
