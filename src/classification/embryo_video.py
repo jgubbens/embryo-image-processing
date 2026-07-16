@@ -51,7 +51,6 @@ class embryo_video(Dataset):
     def __getitem__(self, idx):
         frame = idx + self.window_size # last (1-indexed) frame of the window
         window = self.get_frame_window(frame)
-        window = window.float()
         return window, self.frame_labels[frame]
 
     def get_frame_count(self):

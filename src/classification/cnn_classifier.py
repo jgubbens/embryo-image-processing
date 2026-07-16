@@ -82,7 +82,7 @@ class cnn_classifier:
     def get_hidden_size(self):
         return self.hidden_size
     
-    def train_model(self, train_vids, val_vids, best_model_path, epochs=30, batch_size=16, lr=0.0001, num_workers=4):
+    def train_model(self, train_vids, val_vids, best_model_path, epochs=30, batch_size=64, lr=0.0001, num_workers=12):
         print('Training CNN...')
         print(f"Train vid count: {len(train_vids)}, Val vid count: {len(val_vids)}")
         self.best_model_path = best_model_path
@@ -94,6 +94,7 @@ class cnn_classifier:
         criterion = nn.CrossEntropyLoss(weight=class_weights)
         optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=0.0001)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+        scaler = torch.cuda.amp.GradScaler()
 
         g = torch.Generator()
         g.manual_seed(42)
@@ -112,12 +113,14 @@ class cnn_classifier:
                     m.eval()
             train_loss, train_correct = 0.0, 0
             for x, y in tqdm(loader, desc=f"Epoch {epoch}/{epochs}"):
-                x, y = x.to(self.device), y.to(self.device)
+                x, y = x.to(self.device, dtype=torch.float16), y.to(self.device)
                 optimizer.zero_grad()
-                logits = self.model(x)
-                loss = criterion(logits, y)
-                loss.backward()
-                optimizer.step()
+                with torch.autocast('cuda'):
+                    logits = self.model(x)
+                    loss = criterion(logits, y)
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
                 train_loss += loss.item() * len(x)
                 train_correct += (logits.argmax(dim=1) == y).sum().item()
 
@@ -130,9 +133,10 @@ class cnn_classifier:
             val_loss, val_correct = 0.0, 0
             with torch.no_grad():
                 for x, y in val_loader:
-                    x, y = x.to(self.device), y.to(self.device)
-                    logits = self.model(x)
-                    loss = criterion(logits, y)
+                    x, y = x.to(self.device, dtype=torch.float16), y.to(self.device)
+                    with torch.autocast('cuda'):
+                        logits = self.model(x)
+                        loss = criterion(logits, y)
                     val_loss += loss.item() * len(x)
                     val_correct += (logits.argmax(dim=1) == y).sum().item()
 
