@@ -56,7 +56,7 @@ class Hybrid_HMM:
         )
         print(f'Validation vids: {[embryo.vid_path for embryo in self.val_vids]}')
         self.augment_training_data()
-        self.cnn.train_model(self.train_vids, self.val_vids, best_model_path=self.cnn.best_model_path, epochs=30, batch_size=16)
+        self.cnn.train_model(self.train_vids, self.val_vids, best_model_path=self.cnn.best_model_path, epochs=30, batch_size=32)
         # info = self.load_model_info()
         # self.cnn.load_from_path(info['cnn_model_path'])
         self.cnn.model.eval()

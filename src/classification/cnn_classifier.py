@@ -82,7 +82,7 @@ class cnn_classifier:
     def get_hidden_size(self):
         return self.hidden_size
     
-    def train_model(self, train_vids, val_vids, best_model_path, epochs=30, batch_size=64, lr=0.0001, num_workers=12):
+    def train_model(self, train_vids, val_vids, best_model_path, epochs=30, batch_size=32, lr=0.0001, num_workers=4):
         print('Training CNN...')
         print(f"Train vid count: {len(train_vids)}, Val vid count: {len(val_vids)}")
         self.best_model_path = best_model_path
