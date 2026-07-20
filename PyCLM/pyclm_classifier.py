@@ -45,7 +45,8 @@ class ClassifyEmbryos(OuterPatternMethod):
         print(f"---- stimmulation: {self.experiment_name} ----")
         self._timepoint += context._experiment.pattern.every_t
         self.predictor.predict_frame(context.raw(self._classify_channel))
-        state = self.predictor.current_state
+        # state = self.predictor.current_state
+        state = self.predictor.predictions[-1] if self.predictor.predictions else None
         experiment_name = context._experiment.experiment_name
 
         state_label = self.states[state] if state is not None else "buffering"
