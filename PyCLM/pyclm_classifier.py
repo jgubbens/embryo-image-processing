@@ -6,8 +6,9 @@ import torch
 
 from pyclm import run_pyclm, PFSPositionMover
 from pyclm.core.patterns import PatternContext, OuterPatternMethod
+from classification.hybrid_hmm.hybrid_hmm_predictor import Hybrid_HMM_Predictor
+from classification.pure_hmm.pure_hmm_predictor import Pure_HMM_Predictor
 
-from src.classification.hybrid_hmm.hybrid_hmm_predictor import Hybrid_HMM_Predictor
 
 BASE_PATH = r"E:\Justin\calssification_experiment_trials\20260708"
 
@@ -37,7 +38,7 @@ class ClassifyEmbryos(OuterPatternMethod):
                 with open(self.log_path, 'w') as f:
                     json.dump(info, f, indent=2)
 
-        self.predictor = Hybrid_HMM_Predictor(DEVICE, r'C:\Users\Nikon\Desktop\Code\embryo-image-processing\models\model_info.json', time_between_frames=60)
+        self.predictor = Pure_HMM_Predictor(DEVICE, r'C:\Users\Nikon\Desktop\Code\embryo-image-processing\models\model_info.json', time_between_frames=60)
         self.states = self.predictor.STATES
 
     def generate(self, context: PatternContext) -> np.ndarray:
@@ -55,7 +56,7 @@ class ClassifyEmbryos(OuterPatternMethod):
             self._classification_logs[experiment_name][str(self._timepoint)] = state_label
             with open(self.log_path, "w") as f:
                 json.dump(self._classification_logs, f, indent=2)
-        if state is not None and state >= 9: # NC13
+        if state is not None and state >= 5 and state < 11: # NC11 <= state < NC14+
             # Stimulation with outer bar pattern
             print(f"Stimulation at state: {state_label}")
             stim = super().generate(context)
