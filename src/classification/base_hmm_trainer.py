@@ -13,7 +13,7 @@ from pathlib import Path
 import sys
 import yaml
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from classification.cnn_classifier import cnn_classifier
 from classification.lstm_classifier import lstm_classifier
@@ -25,7 +25,8 @@ class HMM_Trainer:
 
     STATES = ['undetectable', 'NC9', 'NC9M', 'NC10', 'NC10M', 'NC11', 'NC11M', 'NC12', 'NC12M', 'NC13', 'NC13M', 'NC14+']
 
-    def __init__(self, data_dir, device, window_size, preprocess_images=False, lstm_module=False, img_size=None, augment_factor=5, model_name='base'):
+    def __init__(self, data_dir, device, window_size, preprocess_images=False, lstm_module=False, img_size=None, augment_factor=5, model_name='base',
+                 cnn_epochs=10, cnn_batch_size=32, lstm_epochs=10, lstm_batch_size=16):
         self.data_dir = data_dir
         self.device = device
         self.n_states = len(self.STATES)
@@ -37,6 +38,10 @@ class HMM_Trainer:
         self.img_size = img_size or (800, 800)
         self.augment_factor = augment_factor
         self.model_name = model_name
+        self.cnn_epochs = cnn_epochs
+        self.cnn_batch_size = cnn_batch_size
+        self.lstm_epochs = lstm_epochs
+        self.lstm_batch_size = lstm_batch_size
         self.model_path = Path('models', model_name)
         if preprocess_images:
             self.process_training_data()
@@ -55,16 +60,15 @@ class HMM_Trainer:
         )
         print(f'Validation vids: {[embryo.vid_path for embryo in self.val_vids]}')
         self.augment_training_data()
-        self.cnn.train_model(self.train_vids, self.val_vids, best_model_path=self.cnn.best_model_path, epochs=30, batch_size=32)
-        # info = self.load_model_info()
-        # self.cnn.load_from_path(info['cnn_model_path'])
+        self.cnn.train_model(self.train_vids, self.val_vids, best_model_path=self.cnn.best_model_path, epochs=self.cnn_epochs, batch_size=self.cnn_batch_size)
         self.cnn.model.eval()
         self.cnn.evaluate(self.val_vids, save_path=Path(f'{self.model_path}', f'{self.model_name}_cnn_heatmap.png'))
         if self.lstm_module:
-            self.lstm.train_model(self.train_vids, self.val_vids, epochs=30, batch_size=32, lr=0.0001)
+            self.lstm.train_model(self.train_vids, self.val_vids, epochs=self.lstm_epochs, batch_size=self.lstm_batch_size, lr=0.0001)
             self.lstm.evaluate(self.val_vids, save_path=Path(f'{self.model_path}', f'{self.model_name}_lstm_heatmap.png'))
         self._additional_training()
         self.save_model_info()
+        self.evaluate()
 
     def _additional_training(self):
         # Override in subclasses to add to training
@@ -160,8 +164,7 @@ class HMM_Trainer:
                     logits = self.cnn.model(frame)
                     model_probs = torch.softmax(logits, dim=-1).cpu().numpy().squeeze()
             model_pred = np.argmax(model_probs)
-
-            prediction = np.argmax(model_probs)
+            prediction = model_pred
 
             labels.append(label)
             preds.append(prediction)

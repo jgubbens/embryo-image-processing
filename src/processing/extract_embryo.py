@@ -18,7 +18,7 @@ MASK_PADDING_FRACTION = 0.05
 CONFIDENCE_THRESHOLD = 0.5
 MAX_SIZE_DEVIATION = 0.5 # reject masks whose area differs from the median by more than this fraction
 MAX_CENTROID_DEVIATION = 0.2 # reject masks whose centroid differs from the median by more than this fraction of the frame size
-TRANSFORM_SIMILARITY_THRESHOLD = 0.97
+TRANSFORM_SIMILARITY_THRESHOLD = 0.90
 
 class EmbryoExtractor:
     def __init__(self, device: torch.device | None = None):
