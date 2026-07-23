@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.stats import norm
+from scipy.stats import lognorm
 import torch
 from pathlib import Path
 import sys
@@ -44,7 +44,8 @@ class Hybrid_HMM(HMM_Trainer):
         self.duration_model = {}
         for state, d in durations.items():
             if d:
-                self.duration_model[state] = {'mean': np.mean(d), 'std': np.std(d) + 1e-6}
+                log_d = np.log(d)
+                self.duration_model[state] = {'mean': np.mean(log_d), 'std': np.std(log_d) + 1e-6}
 
     def _extra_model_info(self):
         return {'duration_model': {str(state): stats for state, stats in self.duration_model.items()}}
@@ -60,7 +61,7 @@ class Hybrid_HMM(HMM_Trainer):
 
         if current_state in self.duration_model:
             d = self.duration_model[current_state]
-            p_stay = 1 - norm.cdf(seconds_in_state, d['mean'], d['std'])
+            p_stay = 1 - lognorm.cdf(seconds_in_state, d['std'], scale=np.exp(d['mean']))
             probs[current_state] = p_stay
             if current_state + 1 < self.n_states:
                 probs[current_state + 1] = 1 - p_stay
@@ -104,7 +105,7 @@ class Hybrid_HMM(HMM_Trainer):
             duration_probs = self._get_duration_probs(current_state, seconds_in_state)
 
             combined = model_probs * duration_probs
-            combined /= combined.sum()
+            combined /= combined.sum() + 1e-9
             prediction = np.argmax(combined)
             prediction = max(prediction, current_state or 0)
 

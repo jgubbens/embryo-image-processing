@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.stats import norm
+from scipy.stats import lognorm
 import tifffile
 import torch
 
@@ -23,7 +23,7 @@ class Hybrid_HMM_Predictor(HMM_Predictor):
 
         if current_state in self.duration_model:
             d = self.duration_model[current_state]
-            p_stay = 1 - norm.cdf(seconds_in_state, d['mean'], d['std'])
+            p_stay = 1 - lognorm.cdf(seconds_in_state, d['std'], scale=np.exp(d['mean']))
             probs[current_state] = p_stay
             if current_state + 1 < self.n_states:
                 probs[current_state + 1] = 1 - p_stay
@@ -40,7 +40,7 @@ class Hybrid_HMM_Predictor(HMM_Predictor):
         duration_probs = self._get_duration_probs(self.current_state, seconds_in_state)
 
         combined = model_probs * duration_probs
-        combined /= combined.sum()
+        combined /= combined.sum() + 1e-9
         prediction = np.argmax(combined)
         prediction = max(prediction, self.current_state or 0)
 
