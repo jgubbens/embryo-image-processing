@@ -39,7 +39,7 @@ class ClassifyEmbryos(OuterPatternMethod):
                 with open(self.log_path, 'w') as f:
                     json.dump(info, f, indent=2)
 
-        self.predictor = Pure_HMM_Predictor(DEVICE, r'C:\Users\Nikon\Desktop\Code\embryo-image-processing\models\model_info.json', time_between_frames=60)
+        self.predictor = Hybrid_HMM_Predictor(DEVICE, r'C:\Users\Nikon\Desktop\Code\embryo-image-processing\models\hybrid_hmm\model_info.json', time_between_frames=60)
         self.states = self.predictor.STATES
         self.extractor = EmbryoExtractor()
 
@@ -52,11 +52,11 @@ class ClassifyEmbryos(OuterPatternMethod):
         frame = self.extractor.extract_frame(raw_frame)
 
         self.predictor.predict_frame(frame)
-        # state = self.predictor.current_state
-        state = self.predictor.predictions[-1] if self.predictor.predictions else None
+        current_state = self.predictor.get_current_state()
+        state = self.states.index(current_state) if current_state is not None else None
         experiment_name = context._experiment.experiment_name
 
-        state_label = self.states[state] if state is not None else "buffering"
+        state_label = current_state if current_state is not None else "buffering"
         
         with self._log_lock:
             if experiment_name not in self._classification_logs:
@@ -70,7 +70,7 @@ class ClassifyEmbryos(OuterPatternMethod):
             stim = super().generate(context)
 
             if np.sum(stim) == 0:
-                print(f"{self.experiment_name} tried to stim but no stim happened sorry :(")
+                print(f"{self.experiment_name} tried to stim but failed")
 
             return stim
         else:
