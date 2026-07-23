@@ -183,9 +183,11 @@ class cnn_classifier:
 
         with torch.no_grad():
             for x, y in val_loader:
-                x, y = x.to(self.device), y.to(self.device)
-                logits = self.model(x)
-                val_loss += criterion(logits, y).item() * len(x)
+                x, y = x.to(self.device, dtype=torch.float16), y.to(self.device)
+                with torch.autocast('cuda'):
+                    logits = self.model(x)
+                    loss = criterion(logits, y)
+                val_loss += loss.item() * len(x)
                 preds = logits.argmax(dim=1)
                 val_correct += (preds == y).sum().item()
                 all_preds.extend(preds.cpu().numpy())
