@@ -15,9 +15,6 @@ OUTPUT_SIZE = (800, 800)
 
 MASK_FILL_FRACTION = 0.9
 MASK_PADDING_FRACTION = 0.05
-CONFIDENCE_THRESHOLD = 0.5
-MAX_SIZE_DEVIATION = 0.5 # reject masks whose area differs from the median by more than this fraction
-MAX_CENTROID_DEVIATION = 0.2 # reject masks whose centroid differs from the median by more than this fraction of the frame size
 TRANSFORM_SIMILARITY_THRESHOLD = 0.90
 
 class EmbryoExtractor:
@@ -44,24 +41,6 @@ class EmbryoExtractor:
         confidence = float(flows[2][big_mask_small].mean())
         big_mask = cv2.resize(big_mask_small.astype(np.float32), (frame.shape[1], frame.shape[0])) > 0.5
         return big_mask, confidence
-
-    def _filter_masks(self, masks: list[np.ndarray], confidences: list[float]) -> list[int]:
-        candidates = [i for i, (m, c) in enumerate(zip(masks, confidences))
-                    if m.any() and c >= CONFIDENCE_THRESHOLD]
-        if not candidates:
-            return []
-
-        areas = np.array([masks[i].sum() for i in candidates], dtype=float)
-        centroids = np.array([np.mean(np.nonzero(masks[i]), axis=1) for i in candidates])
-
-        median_area = np.median(areas)
-        median_centroid = np.median(centroids, axis=0)
-
-        h, w = masks[0].shape
-        size_ok = np.abs(areas - median_area) / median_area <= MAX_SIZE_DEVIATION
-        centroid_ok = np.linalg.norm(centroids - median_centroid, axis=1) / max(h, w) <= MAX_CENTROID_DEVIATION
-
-        return [candidates[i] for i in range(len(candidates)) if size_ok[i] and centroid_ok[i]]
 
     def _pad_mask(self, mask: np.ndarray, fraction: float = MASK_PADDING_FRACTION) -> np.ndarray:
         _, _, w, h = cv2.boundingRect(mask.astype(np.uint8))

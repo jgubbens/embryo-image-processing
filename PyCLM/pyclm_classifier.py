@@ -8,6 +8,7 @@ from pyclm import run_pyclm, PFSPositionMover
 from pyclm.core.patterns import PatternContext, OuterPatternMethod
 from classification.hybrid_hmm.hybrid_hmm_predictor import Hybrid_HMM_Predictor
 from classification.pure_hmm.pure_hmm_predictor import Pure_HMM_Predictor
+from processing.extract_embryo import EmbryoExtractor
 
 
 BASE_PATH = r"E:\Justin\calssification_experiment_trials\20260708"
@@ -40,11 +41,17 @@ class ClassifyEmbryos(OuterPatternMethod):
 
         self.predictor = Pure_HMM_Predictor(DEVICE, r'C:\Users\Nikon\Desktop\Code\embryo-image-processing\models\model_info.json', time_between_frames=60)
         self.states = self.predictor.STATES
+        self.extractor = EmbryoExtractor()
 
     def generate(self, context: PatternContext) -> np.ndarray:
         print(f"---- stimmulation: {self.experiment_name} ----")
         self._timepoint += context._experiment.pattern.every_t
-        self.predictor.predict_frame(context.raw(self._classify_channel))
+
+        # Preprocess frame
+        raw_frame = context.raw(self._classify_channel)
+        frame = self.extractor.extract_frame(raw_frame)
+
+        self.predictor.predict_frame(frame)
         # state = self.predictor.current_state
         state = self.predictor.predictions[-1] if self.predictor.predictions else None
         experiment_name = context._experiment.experiment_name
