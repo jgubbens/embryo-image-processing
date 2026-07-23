@@ -127,6 +127,12 @@ class EmbryoExtractor:
     
     def extract_frame(self, frame) -> np.ndarray:
         mask, conf = self._segment_frame(self.model, frame)
+        if not mask.any():
+            if self.mask is None:
+                print("No mask found and no previous mask to fall back on. Returning resized raw frame.")
+                return cv2.resize(frame, OUTPUT_SIZE)
+            return cv2.warpAffine(frame, self.transform, OUTPUT_SIZE) * self.mask
+
         padded = self._pad_mask(mask)
         transform = self._orientation_matrix(padded, OUTPUT_SIZE)
         if self.mask is None:
