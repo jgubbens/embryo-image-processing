@@ -21,24 +21,7 @@ class Pure_HMM(HMM_Trainer):
             model_name='pure_hmm',
         )
 
-    def train_hmm(self):
-        Path(self.model_path).mkdir(parents=True, exist_ok=True)
-        self.train_vids, self.val_vids = train_test_split(
-            self.vids, test_size=0.2, random_state=1
-        )
-        print(f'Validation vids: {[embryo.vid_path for embryo in self.val_vids]}')
-        info = self.load_model_info()
-        self.cnn.load_from_path(info['cnn_model_path'])
-        self.cnn.model.eval()
-        self.cnn.evaluate(self.val_vids, save_path=Path(self.model_path, f'{self.model_name}_cnn_heatmap.png'))
-        if self.lstm_module:
-            self.lstm.train_model(self.train_vids, self.val_vids, epochs=self.lstm_epochs, batch_size=self.lstm_batch_size, lr=0.0001)
-            self.lstm.evaluate(self.val_vids, save_path=Path(self.model_path, f'{self.model_name}_lstm_heatmap.png'))
-        self.create_transition_matrix()
-        self.save_model_info()
-        self.evaluate()
-
-    def create_transition_matrix(self):
+    def _additional_training(self):
         counts = np.zeros((self.n_states, self.n_states))
         for vid in self.train_vids:
             labels = list(vid.frame_labels.values())
@@ -50,7 +33,6 @@ class Pure_HMM(HMM_Trainer):
         self.transition_matrix[0] = 0.0
         self.transition_matrix[0][0] = 0.5
         self.transition_matrix[0][1] = 0.5
-        return self.transition_matrix
 
     def _extra_model_info(self):
         return {'transition_matrix': self.transition_matrix.tolist()}

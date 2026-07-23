@@ -61,6 +61,8 @@ class HMM_Trainer:
         print(f'Validation vids: {[embryo.vid_path for embryo in self.val_vids]}')
         self.augment_training_data()
         self.cnn.train_model(self.train_vids, self.val_vids, best_model_path=self.cnn.best_model_path, epochs=self.cnn_epochs, batch_size=self.cnn_batch_size)
+        # info = self.load_model_info()
+        # self.cnn.load_from_path(info['cnn_model_path'])
         self.cnn.model.eval()
         self.cnn.evaluate(self.val_vids, save_path=Path(f'{self.model_path}', f'{self.model_name}_cnn_heatmap.png'))
         if self.lstm_module:
@@ -128,7 +130,7 @@ class HMM_Trainer:
         print(f'Model info saved to {path}')
 
     def _extra_model_info(self):
-        # Override in subclasses to persist extra state (transition_matrix, duration_model, ...)
+        # Override in subclasses to persist extra state
         return {}
 
     def load_model_info(self, path=None):
