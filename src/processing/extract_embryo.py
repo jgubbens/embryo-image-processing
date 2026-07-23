@@ -4,6 +4,7 @@ import sys
 import cv2
 import numpy as np
 import tifffile
+import torch
 from cellpose import models
 from cellpose.models import MODEL_DIR
 from cellpose.transforms import convert_image
@@ -20,8 +21,8 @@ MAX_CENTROID_DEVIATION = 0.2 # reject masks whose centroid differs from the medi
 TRANSFORM_SIMILARITY_THRESHOLD = 0.97
 
 class EmbryoExtractor:
-    def __init__(self):
-        self.load_model()
+    def __init__(self, device: torch.device | None = None):
+        self.load_model(device=device)
         self.mask = None
         self.transform = None
 
@@ -92,14 +93,36 @@ class EmbryoExtractor:
         scale_translate_h = np.vstack([scale_translate, [0.0, 0.0, 1.0]])
         return (scale_translate_h @ rotation_h)[:2]
 
+    def _reposition_transform(self, mask: np.ndarray, output_size: tuple[int, int]) -> np.ndarray:
+        linear = self.transform[:, :2]
+        ys, xs = np.nonzero(mask)
+        points = np.column_stack((xs, ys)).astype(np.float32)
+        rotated_points = points @ linear.T
+
+        out_w, out_h = output_size
+        margin = (1.0 - MASK_FILL_FRACTION) / 2.0 * out_h
+        ymin = rotated_points[:, 1].min()
+        cx = (rotated_points[:, 0].min() + rotated_points[:, 0].max()) / 2.0
+        tx = out_w / 2.0 - cx
+        ty = margin - ymin
+        return np.hstack([linear, [[tx], [ty]]])
+
     def _transform_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
         ref = np.linalg.norm(b)
         if ref == 0:
             return 1.0 if np.linalg.norm(a) == 0 else 0.0
         return 1.0 - np.linalg.norm(a - b) / ref
 
-    def load_model(self, gpu: bool = True) -> models.CellposeModel:
-        self.model = models.CellposeModel(gpu=gpu, pretrained_model=CELLPOSE_MODEL)
+    def load_model(self, device: torch.device | None = None) -> models.CellposeModel:
+        if device is None:
+            if torch.cuda.is_available():
+                device = torch.device("cuda")
+            elif torch.backends.mps.is_available():
+                device = torch.device("mps")
+            else:
+                device = torch.device("cpu")
+        self.model = models.CellposeModel(device=device, pretrained_model=CELLPOSE_MODEL)
+        print(f"EmbryoExtractor model loaded on device: {self.model.device}")
 
     def extract_full_video(self, input_path: Path | np.ndarray, output_path: Path | None = None) -> np.ndarray:
         if isinstance(input_path, np.ndarray):
@@ -147,6 +170,7 @@ class EmbryoExtractor:
             if self._transform_similarity(transform, self.transform) >= TRANSFORM_SIMILARITY_THRESHOLD:
                 transform = self.transform
             else:
+                transform = self._reposition_transform(padded, OUTPUT_SIZE)
                 self.transform = transform
             out_frame = cv2.warpAffine(frame, transform, OUTPUT_SIZE) * self.mask
 
