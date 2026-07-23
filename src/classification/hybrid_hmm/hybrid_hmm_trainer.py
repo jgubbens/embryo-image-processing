@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from classification.cnn_classifier import cnn_classifier
 from classification.lstm_classifier import lstm_classifier
 from classification.embryo_video import embryo_video
-from processing.extract_embryo import extract_embryo
+from processing.extract_embryo import EmbryoExtractor
 
 
 class Hybrid_HMM:
@@ -328,7 +328,8 @@ class Hybrid_HMM:
             # vid_path = tifffile.imread(Path(self.data_dir, 'histone', f'{embryo}.tif'))
             vid_path = tifffile.imread(Path(self.data_dir, 'brightfield', f'{embryo}.tif'))
             output_path = processed_dir / f'{embryo}.tif'
-            extract_embryo(vid_path, output_path=output_path)
+            extractor = EmbryoExtractor()
+            extractor.extract_full_video(vid_path, output_path=output_path)
     
     def augment_training_data(self):
         if self.augment_factor == 0:
@@ -364,7 +365,7 @@ class Hybrid_HMM:
 
 if __name__ == '__main__':
 
-    DATA_PATH = r'E:\Justin\training_data'
+    DATA_PATH = r'data/training_data'
 
     print('Running hidden markov model classification')
     DEVICE = (
@@ -373,7 +374,7 @@ if __name__ == '__main__':
         else 'cpu'
     )
     print(f'Using device: {DEVICE}')
-    classifier = Hybrid_HMM(DATA_PATH, DEVICE, window_size=10, preprocess_images=False, lstm_module=False, img_size=(800, 800), augment_factor=0)
+    classifier = Hybrid_HMM(DATA_PATH, DEVICE, window_size=10, preprocess_images=True, lstm_module=False, img_size=(800, 800), augment_factor=0)
 
     classifier.train_hmm()
     # classifier.load_pretrained_models()
