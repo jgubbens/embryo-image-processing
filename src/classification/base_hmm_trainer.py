@@ -4,13 +4,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.ndimage import gaussian_filter
 from scipy.stats import norm
-import shutil
 from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import train_test_split
 import seaborn as sns
 import tifffile
 import torch
-import torch.nn as nn
 from pathlib import Path
 import sys
 import yaml
@@ -20,14 +18,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from classification.cnn_classifier import cnn_classifier
 from classification.lstm_classifier import lstm_classifier
 from classification.embryo_video import embryo_video
-from processing.extract_embryo import extract_embryo
+from processing.extract_embryo import EmbryoExtractor
 
 
 class HMM_Trainer:
 
     STATES = ['undetectable', 'NC9', 'NC9M', 'NC10', 'NC10M', 'NC11', 'NC11M', 'NC12', 'NC12M', 'NC13', 'NC13M', 'NC14+']
 
-    def __init__(self, data_dir, device, window_size, preprocess_images=False, lstm_module=False, img_size=None, augment_factor=5, model_name='hybrid_hmm'):
+    def __init__(self, data_dir, device, window_size, preprocess_images=False, lstm_module=False, img_size=None, augment_factor=5, model_name='base'):
         self.data_dir = data_dir
         self.device = device
         self.n_states = len(self.STATES)
@@ -65,8 +63,12 @@ class HMM_Trainer:
         if self.lstm_module:
             self.lstm.train_model(self.train_vids, self.val_vids, epochs=30, batch_size=32, lr=0.0001)
             self.lstm.evaluate(self.val_vids, save_path=Path(f'{self.model_path}', f'{self.model_name}_lstm_heatmap.png'))
-        self._train_duration_model()
+        self._additional_training()
         self.save_model_info()
+
+    def _additional_training(self):
+        # Override in subclasses to add to training
+        pass
 
     def load_pretrained_models(self):
         info = self.load_model_info()
@@ -80,7 +82,12 @@ class HMM_Trainer:
         self.val_vids = [vid for vid in self.vids if str(vid.vid_path) in val_paths]
         self.train_vids = [vid for vid in self.vids if str(vid.vid_path) in train_paths]
         self.augment_factor = info.get('augment_factor', 0)
-    
+        self._load_extra_model_info(info)
+
+    def _load_extra_model_info(self, info):
+        # Override in subclasses to restore extra state (transition_matrix, duration_model, ...)
+        pass
+
     def load_embryo_videos(self, processed):
         yaml_data = self._load_annotations()
         self.vids = []
@@ -88,7 +95,6 @@ class HMM_Trainer:
             if processed:
                 vid_path = Path(self.data_dir, 'processed_tifs', f'{embryo}.tif')
             else:
-                # vid_path = Path(self.data_dir, 'histone', f'{embryo}.tif')
                 vid_path = Path(self.data_dir, 'brightfield', f'{embryo}.tif')
                 # vid_path = Path(self.data_dir, 'processed_tifs', f'{embryo}.tif')
             self.vids.append(embryo_video(yaml_data[embryo], vid_path, self.STATES, window_size=self.window_size, img_size=self.img_size))
@@ -97,32 +103,36 @@ class HMM_Trainer:
         with open(Path(self.data_dir, 'labels.yaml')) as f:
             return yaml.safe_load(f)
 
-    def save_model_info(self, path=f'models/hybrid_hmm/hybrid_hmm_model_info.json'):
+    def save_model_info(self, path=None):
+        if path is None:
+            path = Path(self.model_path, f'{self.model_name}_model_info.json')
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         info = {
             'window_size': self.window_size,
             'lstm_module': self.lstm_module,
             'preprocess_images': self.preprocess_images,
-            'cnn_model_path': self.cnn.best_model_path,
-            'lstm_model_path': self.lstm.best_model_path if self.lstm_module else None,
+            'cnn_model_path': str(self.cnn.best_model_path),
+            'lstm_model_path': str(self.lstm.best_model_path) if self.lstm_module else None,
             'train_vid_paths': list(set(str(vid.vid_path) for vid in self.train_vids)),
             'val_vid_paths': [str(vid.vid_path) for vid in self.val_vids],
             'img_size': list(self.img_size),
             'augment_factor': self.augment_factor,
         }
+        info.update(self._extra_model_info())
         with open(path, 'w') as f:
             json.dump(info, f, indent=2)
         print(f'Model info saved to {path}')
 
-    def load_model_info(self, path='models/hybrid_hmm/hybrid_hmm_model_info.json'):
+    def _extra_model_info(self):
+        # Override in subclasses to persist extra state (transition_matrix, duration_model, ...)
+        return {}
+
+    def load_model_info(self, path=None):
+        if path is None:
+            path = Path(self.model_path, f'{self.model_name}_model_info.json')
         with open(path) as f:
             info = json.load(f)
         return info
-    
-    # To be overridden by subclasses
-    def _make_frame_prediction(self, model_probs):
-        prediction = np.argmax(model_probs)
-        return prediction
 
     def _evaluate_sample(self, vid, ax=None):
         print(f'Inferring for sample {vid.vid_path}')
@@ -151,7 +161,7 @@ class HMM_Trainer:
                     model_probs = torch.softmax(logits, dim=-1).cpu().numpy().squeeze()
             model_pred = np.argmax(model_probs)
 
-            prediction = self._make_frame_prediction(model_probs)
+            prediction = np.argmax(model_probs)
 
             labels.append(label)
             preds.append(prediction)
@@ -167,8 +177,14 @@ class HMM_Trainer:
         preds = np.array(preds)
         model_preds = np.array(model_preds)
 
+        self._plot_sample_progression(vid, labels, preds, model_preds, model_label, model_color, ax=ax)
+
+        return labels, preds, model_preds
+
+    def _plot_sample_progression(self, vid, labels, preds, model_preds, model_label, model_color, ax=None):
+        x = np.arange(len(labels))
+
         if ax is not None:
-            x = np.arange(len(labels))
             ax.step(x, labels, where='post', linewidth=2, color='tab:blue', label='True')
             ax.step(x, preds, where='post', linewidth=2, color='tab:red', alpha=0.8, label='Predicted')
             ax.step(x, model_preds, where='post', linewidth=2, color=model_color, alpha=0.6, linestyle='--', label=model_label)
@@ -181,28 +197,26 @@ class HMM_Trainer:
             handles, labels_ = ax.get_legend_handles_labels()
             if handles:
                 ax.legend(fontsize=8)
-        else:
-            fig, ax = plt.subplots(figsize=(12, 4))
-            x = np.arange(len(labels))
-            ax.step(x, labels, where='post', linewidth=2, color='tab:blue', label='True')
-            ax.step(x, preds, where='post', linewidth=2, color='tab:red', alpha=0.8, label='Predicted')
-            ax.step(x, model_preds, where='post', linewidth=2, color=model_color, alpha=0.6, linestyle='--', label=model_label)
-            ax.set_title(Path(vid.vid_path).stem)
-            ax.set_xlabel('Frame')
-            ax.set_ylabel('State')
-            ax.set_yticks(range(self.n_states))
-            ax.set_yticklabels(self.STATES)
-            ax.grid(True, alpha=0.3)
-            ax.legend()
-            plt.tight_layout()
-            Path(self.model_path).mkdir(parents=True, exist_ok=True)
-            plt.savefig(
-                Path(self.model_path, f"{Path(vid.vid_path).stem}_state_progression.png"),
-                dpi=150
-            )
-            plt.close()
 
-        return labels, preds, model_preds
+        fig, ax_individual = plt.subplots(figsize=(12, 4))
+        ax_individual.step(x, labels, where='post', linewidth=2, color='tab:blue', label='True')
+        ax_individual.step(x, preds, where='post', linewidth=2, color='tab:red', alpha=0.8, label='Predicted')
+        ax_individual.step(x, model_preds, where='post', linewidth=2, color=model_color, alpha=0.6, linestyle='--', label=model_label)
+        ax_individual.set_title(Path(vid.vid_path).stem)
+        ax_individual.set_xlabel('Frame')
+        ax_individual.set_ylabel('State')
+        ax_individual.set_yticks(range(self.n_states))
+        ax_individual.set_yticklabels(self.STATES)
+        ax_individual.grid(True, alpha=0.3)
+        ax_individual.legend()
+        plt.tight_layout()
+        chart_dir = Path(self.model_path, "charts")
+        chart_dir.mkdir(parents=True, exist_ok=True)
+        plt.savefig(
+            Path(chart_dir, f"{Path(vid.vid_path).stem}_state_progression.png"),
+            dpi=150
+        )
+        plt.close()
 
     def evaluate(self):
         all_preds = []
@@ -277,11 +291,10 @@ class HMM_Trainer:
         yaml_data = self._load_annotations()
 
         for embryo in yaml_data:
-            # vid_path = tifffile.imread(Path(self.data_dir, 'labeled_tifs', f'{embryo}.tif'))
-            # vid_path = tifffile.imread(Path(self.data_dir, 'histone', f'{embryo}.tif'))
             vid_path = tifffile.imread(Path(self.data_dir, 'brightfield', f'{embryo}.tif'))
             output_path = processed_dir / f'{embryo}.tif'
-            extract_embryo(vid_path, output_path=output_path)
+            extractor = EmbryoExtractor()
+            extractor.extract_full_video(vid_path, output_path=output_path)
     
     def augment_training_data(self):
         if self.augment_factor == 0:
