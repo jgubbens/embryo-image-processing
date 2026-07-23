@@ -94,8 +94,9 @@ class Hybrid_HMM(HMM_Trainer):
                 model_probs = seq_probs[t]
             else:
                 with torch.no_grad():
-                    frame = frame.unsqueeze(0).to(self.device)
-                    logits = self.cnn.model(frame)
+                    frame = frame.unsqueeze(0).to(self.device, dtype=torch.float16)
+                    with torch.autocast('cuda'):
+                        logits = self.cnn.model(frame)
                     model_probs = torch.softmax(logits, dim=-1).cpu().numpy().squeeze()
             model_pred = np.argmax(model_probs)
 

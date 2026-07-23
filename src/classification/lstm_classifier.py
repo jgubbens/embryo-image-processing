@@ -39,9 +39,10 @@ class lstm_classifier:
         features, labels = [], []
         with torch.no_grad():
             for x, y in loader:
-                x = x.to(self.device)
-                feat = cnn.model(x)
-                features.append(feat)
+                x = x.to(self.device, dtype=torch.float16)
+                with torch.autocast('cuda'):
+                    feat = cnn.model(x)
+                features.append(feat.float())
                 labels.append(y)
         features = torch.cat(features, dim=0).unsqueeze(0)
         labels = torch.cat(labels, dim=0).to(self.device)
