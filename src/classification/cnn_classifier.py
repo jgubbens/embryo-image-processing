@@ -18,6 +18,7 @@ class cnn_classifier:
     def __init__(self, device, window_size, states):
         self.set_seed()
         self.device = device
+        self.device_type = torch.device(device).type
         self.window_size = window_size
         self.STATES = states
         self._build_model()
@@ -94,7 +95,7 @@ class cnn_classifier:
         criterion = nn.CrossEntropyLoss(weight=class_weights)
         optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=0.0001)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
-        scaler = torch.cuda.amp.GradScaler()
+        scaler = torch.amp.GradScaler(device=self.device_type, enabled=(self.device_type == 'cuda'))
 
         g = torch.Generator()
         g.manual_seed(42)
@@ -115,7 +116,7 @@ class cnn_classifier:
             for x, y in tqdm(loader, desc=f"Epoch {epoch}/{epochs}"):
                 x, y = x.to(self.device, dtype=torch.float16), y.to(self.device)
                 optimizer.zero_grad()
-                with torch.autocast('cuda'):
+                with torch.autocast(self.device_type):
                     logits = self.model(x)
                     loss = criterion(logits, y)
                 scaler.scale(loss).backward()
@@ -134,7 +135,7 @@ class cnn_classifier:
             with torch.no_grad():
                 for x, y in val_loader:
                     x, y = x.to(self.device, dtype=torch.float16), y.to(self.device)
-                    with torch.autocast('cuda'):
+                    with torch.autocast(self.device_type):
                         logits = self.model(x)
                         loss = criterion(logits, y)
                     val_loss += loss.item() * len(x)
@@ -184,7 +185,7 @@ class cnn_classifier:
         with torch.no_grad():
             for x, y in val_loader:
                 x, y = x.to(self.device, dtype=torch.float16), y.to(self.device)
-                with torch.autocast('cuda'):
+                with torch.autocast(self.device_type):
                     logits = self.model(x)
                     loss = criterion(logits, y)
                 val_loss += loss.item() * len(x)

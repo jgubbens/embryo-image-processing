@@ -18,6 +18,7 @@ class lstm_classifier:
     def __init__(self, hidden_size, device, states, cnn):
         self.hidden_size = hidden_size
         self.device = device
+        self.device_type = torch.device(device).type
         self.STATES = states
         self.cnn = cnn
         self._build_model()
@@ -40,7 +41,7 @@ class lstm_classifier:
         with torch.no_grad():
             for x, y in loader:
                 x = x.to(self.device, dtype=torch.float16)
-                with torch.autocast('cuda'):
+                with torch.autocast(self.device_type):
                     feat = cnn.model(x)
                 features.append(feat.float())
                 labels.append(y)

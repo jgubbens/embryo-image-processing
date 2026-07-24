@@ -43,7 +43,7 @@ class Pure_HMM(HMM_Trainer):
     def viterbi(self, obs_probs):
         T, n = obs_probs.shape
         log_trans = np.log(self.transition_matrix + 1e-10)
-        log_emit = np.log(obs_probs + 1e-10)
+        log_emit = np.log(obs_probs.astype(np.float64) + 1e-10)
 
         dp = np.full((T, n), -np.inf)
         backptr = np.zeros((T, n), dtype=int)
@@ -84,7 +84,7 @@ class Pure_HMM(HMM_Trainer):
             else:
                 with torch.no_grad():
                     frame = frame.unsqueeze(0).to(self.device, dtype=torch.float16)
-                    with torch.autocast('cuda'):
+                    with torch.autocast(self.device_type):
                         logits = self.cnn.model(frame)
                     model_probs = torch.softmax(logits, dim=-1).cpu().numpy().squeeze()
 

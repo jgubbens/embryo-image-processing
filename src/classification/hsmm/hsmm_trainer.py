@@ -28,6 +28,7 @@ class HSMM_Trainer:
     def __init__(self, data_dir, device, window_size, preprocess_images=False, lstm_module=False, img_size=None, max_duration=300):
         self.data_dir = data_dir
         self.device = device
+        self.device_type = torch.device(device).type
         self.n_states = len(self.STATES)
         self.window_size = window_size
         self.lstm_module = lstm_module
@@ -258,7 +259,7 @@ class HSMM_Trainer:
             else:
                 with torch.no_grad():
                     frame = frame.unsqueeze(0).to(self.device, dtype=torch.float16)
-                    with torch.autocast('cuda'):
+                    with torch.autocast(self.device_type):
                         logits = self.cnn.model(frame)
                     model_probs = torch.softmax(logits, dim=-1).cpu().numpy().squeeze()
 

@@ -3,7 +3,6 @@ import json
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.ndimage import gaussian_filter
-from scipy.stats import norm
 from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import train_test_split
 import seaborn as sns
@@ -29,6 +28,7 @@ class HMM_Trainer:
                  cnn_epochs=10, cnn_batch_size=32, lstm_epochs=10, lstm_batch_size=16):
         self.data_dir = data_dir
         self.device = device
+        self.device_type = torch.device(device).type
         self.n_states = len(self.STATES)
         self.window_size = window_size
         self.lstm_module = lstm_module
@@ -163,7 +163,7 @@ class HMM_Trainer:
             else:
                 with torch.no_grad():
                     frame = frame.unsqueeze(0).to(self.device, dtype=torch.float16)
-                    with torch.autocast('cuda'):
+                    with torch.autocast(self.device_type):
                         logits = self.cnn.model(frame)
                     model_probs = torch.softmax(logits, dim=-1).cpu().numpy().squeeze()
             model_pred = np.argmax(model_probs)
@@ -311,24 +311,15 @@ class HMM_Trainer:
             print(f'Augmenting video: {vid.vid_path}')
             for _ in range(self.augment_factor):
                 augmented = copy.copy(vid)
-                frames = vid.vid.astype(np.float32) 
+                frames = vid.vid.numpy().astype(np.float32)
 
                 # Gaussian blur
                 sigma = np.random.uniform(0.5, 1.5)
                 frames = gaussian_filter(frames, sigma=(0, sigma, sigma))
 
                 # Gaussian noise
-                noise_std = np.random.uniform(0.001, 0.01) * 65535
+                noise_std = np.random.uniform(0.01, 0.05)
                 frames = frames + np.random.normal(0, noise_std, frames.shape)
 
-                # Brightness
-                brightness = np.random.uniform(0.8, 1.2)
-                frames = frames * brightness
-
-                # Contrast
-                contrast = np.random.uniform(0.8, 1.2)
-                mean = frames.mean()
-                frames = mean + contrast * (frames - mean)
-
-                augmented.vid = np.clip(frames, 0, 65535).astype(np.uint16)
+                augmented.vid = torch.from_numpy(np.clip(frames, 0, 1)).half()
                 self.train_vids.append(augmented)
