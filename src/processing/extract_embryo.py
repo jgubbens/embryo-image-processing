@@ -1,7 +1,9 @@
 from pathlib import Path
 import sys
+from typing import NamedTuple
 
 import cv2
+from dataclasses import dataclass
 import numpy as np
 import tifffile
 import torch
@@ -16,6 +18,7 @@ OUTPUT_SIZE = (800, 800)
 MASK_FILL_FRACTION = 0.9
 MASK_PADDING_FRACTION = 0.05
 TRANSFORM_SIMILARITY_THRESHOLD = 0.90
+MIN_MASK_SIZE_FRACTION = 0.6
 
 class EmbryoExtractor:
     def __init__(self, device: torch.device | None = None):
@@ -23,7 +26,7 @@ class EmbryoExtractor:
         self.mask = None
         self.transform = None
 
-    def _segment_frame(self, model, frame: np.ndarray, segment_size=(100, 100)) -> tuple[np.ndarray, float]:
+    def _segment_frame(self, model, frame: np.ndarray, segment_size) -> tuple[np.ndarray, float]:
         norm = cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         enhanced = clahe.apply(norm)
@@ -72,8 +75,8 @@ class EmbryoExtractor:
         scale_translate_h = np.vstack([scale_translate, [0.0, 0.0, 1.0]])
         return (scale_translate_h @ rotation_h)[:2]
 
-    def _reposition_transform(self, mask: np.ndarray, output_size: tuple[int, int]) -> np.ndarray:
-        linear = self.transform[:, :2]
+    def _reposition_transform(self, mask: np.ndarray, output_size: tuple[int, int], reference_transform: np.ndarray) -> np.ndarray:
+        linear = reference_transform[:, :2]
         ys, xs = np.nonzero(mask)
         points = np.column_stack((xs, ys)).astype(np.float32)
         rotated_points = points @ linear.T
@@ -127,8 +130,8 @@ class EmbryoExtractor:
         return resized_result
     
     
-    def extract_frame(self, frame) -> np.ndarray:
-        mask, conf = self._segment_frame(self.model, frame)
+    def extract_frame(self, frame, segment_size=(400,400)) -> np.ndarray:
+        mask, conf = self._segment_frame(self.model, frame, segment_size)
         if not mask.any():
             if self.mask is None:
                 print("No mask found and no previous mask to fall back on. Returning resized raw frame.")
@@ -149,11 +152,117 @@ class EmbryoExtractor:
             if self._transform_similarity(transform, self.transform) >= TRANSFORM_SIMILARITY_THRESHOLD:
                 transform = self.transform
             else:
-                transform = self._reposition_transform(padded, OUTPUT_SIZE)
+                transform = self._reposition_transform(padded, OUTPUT_SIZE, self.transform)
                 self.transform = transform
             out_frame = cv2.warpAffine(frame, transform, OUTPUT_SIZE) * self.mask
 
         return out_frame
+
+@dataclass(eq=False)
+class PositionInfo():
+    mask: np.ndarray
+    transform: np.ndarray
+    raw_mask: np.ndarray
+
+class FrameResult(NamedTuple):
+    out_frame: np.ndarray
+    mask: np.ndarray
+
+class MultipleEmbryoExtractor(EmbryoExtractor):
+    def __init__(self, device: torch.device | None = None):
+        self.load_model(device=device)
+        self.positions = {}
+
+    def _segment_frame(self, model, frame: np.ndarray, segment_size) -> tuple[np.ndarray, float]:
+        norm = cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(norm)
+        small = cv2.resize(enhanced, segment_size)
+        transformed = convert_image(small)
+        masks, flows, _ = model.eval(transformed, normalize=True)
+
+        if masks.max() == 0:
+            print('No masks found')
+            return []
+
+        labels, counts = np.unique(masks[masks > 0], return_counts=True)
+        resized_masks = []
+        for label in labels:
+            small_mask = masks == label
+            resized = cv2.resize(small_mask.astype(np.float32), (frame.shape[1], frame.shape[0])) > 0.5
+            resized_masks.append(resized)
+        return resized_masks
+
+    def extract_full_video(self, input_path: Path | np.ndarray, output_path: Path | None = None) -> np.ndarray:
+        raise NotImplementedError("Extract full video not supported for multiple embryos")
+    
+    def extract_frame(self, frame, segment_size=(400,400)):
+        out_frames = {}
+        masks = self._segment_frame(self.model, frame, segment_size)
+
+        if not masks:
+            print(f"No masks were found.")
+            if len(self.positions) == 0:
+                print("No masks were found, and there are no previous masks to fall back to. Returning resized raw frame.")
+                resized = cv2.resize(frame, OUTPUT_SIZE)
+                out_frames[0] = FrameResult(resized, np.zeros(frame.shape[:2], dtype=bool))
+            else:
+                print("No masks found. Falling back to previous masks.")
+                for pos_id, pos in self.positions.items():
+                    out_frame = cv2.warpAffine(frame, pos.transform, OUTPUT_SIZE) * pos.mask
+                    out_frames[pos_id] = FrameResult(out_frame, pos.raw_mask)
+            return out_frames
+    
+        largest_size = max(np.count_nonzero(m) for m in masks)
+        masks = [m for m in masks if np.count_nonzero(m) >= MIN_MASK_SIZE_FRACTION * largest_size]
+
+        seen = set()
+        for mask in masks:
+            padded = self._pad_mask(mask)
+            transform = self._orientation_matrix(padded, OUTPUT_SIZE)
+
+            pos_id = self._find_position(mask)
+
+            if pos_id is None:
+                pos_id = len(self.positions) + 1
+                pos = PositionInfo(mask=mask, transform=transform, raw_mask=mask)
+                self.positions[pos_id] = pos
+                warped_mask = cv2.warpAffine(padded.astype(np.uint8), transform, OUTPUT_SIZE) > 0
+                x, y, w, h = cv2.boundingRect(warped_mask.astype(np.uint8))
+                out_mask = np.zeros(warped_mask.shape, dtype=bool)
+                out_mask[y:y + h, x:x + w] = True
+                pos.mask = out_mask
+                out_frame = cv2.warpAffine(frame, transform, OUTPUT_SIZE) * out_mask
+            else:
+                pos = self.positions[pos_id]
+                pos.raw_mask = mask
+                if self._transform_similarity(transform, pos.transform) >= TRANSFORM_SIMILARITY_THRESHOLD:
+                    transform = pos.transform
+                else:
+                    transform = self._reposition_transform(padded, OUTPUT_SIZE, pos.transform)
+                    pos.transform = transform
+                out_frame = cv2.warpAffine(frame, transform, OUTPUT_SIZE) * pos.mask
+            out_frames[pos_id] = FrameResult(out_frame, pos.raw_mask)
+            seen.add(pos_id)
+
+        for pos_id, pos in self.positions.items():
+            if pos_id not in seen:
+                out_frame = cv2.warpAffine(frame, pos.transform, OUTPUT_SIZE) * pos.mask
+                out_frames[pos_id] = FrameResult(out_frame, pos.raw_mask)
+
+        return out_frames
+
+    def _find_position(self, mask):
+        ys, xs = np.nonzero(mask)
+        points = np.column_stack((xs, ys)).astype(np.float32)
+        mean, eigenvectors = cv2.PCACompute(points, mean=None)
+        centroid = np.array([mean[0, 0], mean[0, 1]])
+        for pos_id, pos in self.positions.items():
+            wx, wy = pos.transform[:, :2] @ centroid + pos.transform[:, 2]
+            wx, wy = int(round(wx)), int(round(wy))
+            if 0 <= wy < pos.mask.shape[0] and 0 <= wx < pos.mask.shape[1] and pos.mask[wy, wx]:
+                return pos_id
+        return None
 
 
 if __name__ == "__main__":

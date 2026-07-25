@@ -6,9 +6,9 @@ System = "Startup"
 
 [imaging]
 every_t = 1
-exposure = 600
+exposure = 300
 save = true
-binning = 2
+binning = 1
 
     [imaging.config_groups]
     Laser-Intensity = "25%"
@@ -22,12 +22,23 @@ presets = ["brightfield"]
     [channels.brightfield.config_groups]
     Laser-Intensity = "50%"
 
+[stimulation]
+every_t = 1
+exposure = 500
+save = false
+
+    [stimulation.config_groups]
+    Channel = "DMD"
+    LightPath = "DMD_brightfield"
+    Laser-Intensity = "AllOff"
+    Sola = "30"
+
 [segmentation]
 method = "embryo_resizing"
 ideal_size = [200, 200]
 normhigh = 99
 
 [pattern]
-method = "classify_embryos"
-fraction_length = 0.2
-channel = "brightfield"
+method = "classify_multiple_embryos"
+fraction_length = 0.3
+classify_channel = "brightfield"
