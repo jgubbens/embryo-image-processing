@@ -1,0 +1,203 @@
+import numpy as np
+from scipy.stats import lognorm
+import torch
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from classification.base_hmm_trainer import HMM_Trainer
+
+
+class Combined_HMM(HMM_Trainer):
+
+    def __init__(self, data_dir, device, window_size, preprocess_images=False, lstm_module=False, img_size=None, augment_factor=5, switch_state=5):
+        super().__init__(
+            data_dir, device, window_size,
+            preprocess_images=preprocess_images,
+            lstm_module=lstm_module,
+            img_size=img_size,
+            augment_factor=augment_factor,
+            model_name='combined_hmm',
+        )
+        self.switch_state = switch_state
+
+    def _additional_training(self):
+        self._train_transition_matrix()
+        self._train_duration_model()
+
+    def _train_transition_matrix(self):
+        counts = np.zeros((self.n_states, self.n_states))
+        for vid in self.train_vids:
+            labels = list(vid.frame_labels.values())
+            for t in range(1, len(labels)):
+                counts[labels[t - 1], labels[t]] += 1
+        row_sums = counts.sum(axis=1, keepdims=True)
+        row_sums[row_sums == 0] = 1
+        self.transition_matrix = counts / row_sums
+        self.transition_matrix[0] = 0.0
+        self.transition_matrix[0][0] = 0.5
+        self.transition_matrix[0][1] = 0.5
+
+    def viterbi(self, obs_probs):
+        T, n = obs_probs.shape
+        log_trans = np.log(self.transition_matrix + 1e-10)
+        log_emit = np.log(obs_probs.astype(np.float64) + 1e-10)
+
+        dp = np.full((T, n), -np.inf)
+        backptr = np.zeros((T, n), dtype=int)
+
+        # Uniform start distribution
+        dp[0] = log_emit[0] - np.log(n)
+
+        for t in range(1, T):
+            candidates = dp[t - 1, :, None] + log_trans
+            backptr[t] = np.argmax(candidates, axis=0)
+            dp[t] = candidates[backptr[t], np.arange(n)] + log_emit[t]
+
+        best_path = np.zeros(T, dtype=int)
+        best_path[-1] = np.argmax(dp[-1])
+        for t in range(T - 2, -1, -1):
+            best_path[t] = backptr[t + 1, best_path[t + 1]]
+
+        return float(dp[-1, best_path[-1]]), best_path.tolist()
+
+    def _train_duration_model(self):
+        durations = {i: [] for i in range(self.n_states)}
+        for vid in self.train_vids:
+            labels = list(vid.frame_labels.values())
+            current_state = labels[0]
+            count = 1
+            for t in range(1, len(labels)):
+                if labels[t] == current_state:
+                    count += 1
+                else:
+                    duration_seconds = count * vid.time_between_frames
+                    durations[current_state].append(duration_seconds)
+                    current_state = labels[t]
+                    count = 1
+            duration_seconds = count * vid.time_between_frames
+            durations[current_state].append(duration_seconds)
+
+        self.duration_model = {}
+        for state, d in durations.items():
+            if d:
+                log_d = np.log(d)
+                self.duration_model[state] = {'mean': np.mean(log_d), 'std': np.std(log_d) + 1e-6}
+
+    def _extra_model_info(self):
+        return {
+            'transition_matrix': self.transition_matrix.tolist(),
+            'duration_model': {str(state): stats for state, stats in self.duration_model.items()},
+            'switch_state': self.switch_state,
+        }
+
+    def _load_extra_model_info(self, info):
+        self.transition_matrix = np.array(info['transition_matrix'])
+        self.duration_model = {int(k): v for k, v in info['duration_model'].items()}
+        self.switch_state = info.get('switch_state', self.switch_state)
+
+    def _get_duration_probs(self, current_state, seconds_in_state):
+        probs = np.zeros(self.n_states)
+
+        if current_state is None or current_state == 0:
+            return np.ones(self.n_states) / self.n_states
+
+        if current_state in self.duration_model:
+            d = self.duration_model[current_state]
+            p_stay = 1 - lognorm.cdf(seconds_in_state, d['std'], scale=np.exp(d['mean']))
+            probs[current_state] = p_stay
+            if current_state + 1 < self.n_states:
+                probs[current_state + 1] = 1 - p_stay
+            else:
+                probs[current_state] = 1.0
+        else:
+            probs[current_state] = 1.0
+
+        probs /= probs.sum() + 1e-9
+        return probs
+
+    def _evaluate_sample(self, vid, ax=None):
+        print(f'Inferring for sample {vid.vid_path}')
+
+        labels = []
+        all_probs = []
+
+        model_label = 'LSTM' if self.lstm_module else 'CNN'
+        model_color = 'tab:purple' if self.lstm_module else 'tab:green'
+
+        if self.lstm_module:
+            seq_probs, _ = self.lstm.predict_probs(vid)
+
+        preds = []
+        current_state = None
+        frames_in_state = 0
+        hybrid_mode = False
+
+        for t in range(len(vid)):
+            frame, label = vid[t]
+            labels.append(label)
+
+            if self.lstm_module:
+                model_probs = seq_probs[t]
+            else:
+                with torch.no_grad():
+                    frame = frame.unsqueeze(0).to(self.device, dtype=torch.float16)
+                    with torch.autocast(self.device_type):
+                        logits = self.cnn.model(frame)
+                    model_probs = torch.softmax(logits, dim=-1).cpu().numpy().squeeze()
+
+            all_probs.append(model_probs)
+            obs_probs = np.stack(all_probs)
+            model_pred = np.argmax(model_probs)
+            if model_pred >= self.switch_state:
+                hybrid_mode = True
+
+            if not hybrid_mode:
+                _, path = self.viterbi(obs_probs)
+                prediction = path[-1]
+            else:
+                seconds_in_state = frames_in_state * vid.time_between_frames
+                duration_probs = self._get_duration_probs(current_state, seconds_in_state)
+
+                combined = model_probs * duration_probs
+                combined /= combined.sum() + 1e-9
+                prediction = np.argmax(combined)
+                prediction = max(prediction, current_state or 0)
+
+            if prediction == current_state:
+                frames_in_state += 1
+            else:
+                current_state = prediction
+                frames_in_state = 1
+
+            preds.append(prediction)
+
+        obs_probs = np.stack(all_probs)
+        model_preds = np.argmax(obs_probs, axis=1)
+
+        labels = np.array(labels)
+        preds = np.array(preds)
+        model_preds = np.array(model_preds)
+
+        self._plot_sample_progression(vid, labels, preds, model_preds, model_label, model_color, ax=ax)
+
+        return labels, preds, model_preds
+
+
+if __name__ == '__main__':
+
+    DATA_PATH = r'data/training_data'
+
+    print('Running hidden markov model classification')
+    DEVICE = (
+        'cuda' if torch.cuda.is_available()
+        else 'mps' if torch.backends.mps.is_available()
+        else 'cpu'
+    )
+    print(f'Using device: {DEVICE}')
+    classifier = Combined_HMM(DATA_PATH, DEVICE, window_size=10, preprocess_images=True, lstm_module=False, img_size=(800, 800), augment_factor=0, switch_state=5)
+
+    classifier.train_hmm()
+    # classifier.load_pretrained_models()
+    # classifier.evaluate()

@@ -22,7 +22,7 @@ from processing.extract_embryo import EmbryoExtractor
 
 class HMM_Trainer:
 
-    STATES = ['undetectable', 'NC9', 'NC9M', 'NC10', 'NC10M', 'NC11', 'NC11M', 'NC12', 'NC12M', 'NC13', 'NC13M', 'NC14+']
+    STATES = ['undetectable', 'NC10', 'NC10M', 'NC11', 'NC11M', 'NC12', 'NC12M', 'NC13', 'NC13M', 'NC14+']
 
     def __init__(self, data_dir, device, window_size, preprocess_images=False, lstm_module=False, img_size=None, augment_factor=5, model_name='base',
                  cnn_epochs=10, cnn_batch_size=32, lstm_epochs=10, lstm_batch_size=16):
