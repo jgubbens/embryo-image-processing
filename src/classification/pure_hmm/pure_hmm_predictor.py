@@ -37,6 +37,5 @@ if __name__ == "__main__":
     # Test live classifier
     print('Testing live classifier')
     test_vid = tifffile.imread("data/training_data/brightfield/embryo3.tif")
-    # test_vid = tifffile.imread("data/hmm_tifs/processed_tifs/NCEmbryo34.tif")
     for frame in test_vid:
         predictor.predict_frame(torch.tensor(frame))

@@ -8,7 +8,7 @@ from classification.lstm_classifier import lstm_classifier
 
 class HMM_Predictor:
 
-    STATES = ['undetectable', 'NC9', 'NC9M', 'NC10', 'NC10M', 'NC11', 'NC11M', 'NC12', 'NC12M', 'NC13', 'NC13M', 'NC14+']
+    STATES = ['undetectable', 'NC10', 'NC10M', 'NC11', 'NC11M', 'NC12', 'NC12M', 'NC13', 'NC13M', 'NC14+']
 
     def __init__(self, device, model_info_path, time_between_frames):
         self.device = device
