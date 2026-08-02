@@ -58,7 +58,7 @@ class ClassifyEmbryo(OuterPatternMethod):
         raw_frame = context.raw(self._classify_channel)
         frame = self.extractor.extract_frame(raw_frame)
 
-        os.mkdirs(Path(BASE_PATH, "processed_frames"), exist_ok=True)
+        os.makedirs(Path(BASE_PATH, "processed_frames"), exist_ok=True)
         tifffile.imwrite(Path(BASE_PATH, "processed_frames", f"{context._experiment.experiment_name}_{self._timepoint}.tif"), frame)
 
         self.predictor.predict_frame(frame)
@@ -157,7 +157,8 @@ class ClassifyMultipleEmbryos(OuterPatternMethod):
         stim = np.zeros((int(self.pattern_shape[0]), int(self.pattern_shape[1])), dtype=np.float16)
 
         should_stim = False
-        
+
+        os.makedirs(Path(BASE_PATH, "processed_frames"), exist_ok=True)
         for id, frame in frames.items():
             if id not in self.tracked_predictors.keys():
                 self.tracked_predictors[id] = Hybrid_HMM_Predictor(self.DEVICE, PREDICTOR_PATH, time_between_frames=60)
